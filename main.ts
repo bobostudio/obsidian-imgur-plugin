@@ -33,8 +33,21 @@ export default class ImgurPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
-		this.uploader = new COSUploader(this.settings);
-		new Notice("你的图床插件已启动,请先配置腾讯云COS!");
+		
+		// 检查必要的配置是否已设置
+		if (!this.settings.secretId || !this.settings.secretKey || !this.settings.bucket) {
+			new Notice("请先在设置中配置腾讯云 COS 信息！");
+			// 不初始化 uploader，等待用户配置
+		} else {
+			try {
+				this.uploader = new COSUploader(this.settings);
+				new Notice("腾讯云 COS 图床插件已启动！");
+			} catch (error) {
+				new Notice(`插件初始化失败：${error.message}`);
+				console.error('Plugin initialization error:', error);
+			}
+		}
+		
 		// 拖拽图片上传处理
 		this.registerEvent(
 			this.app.workspace.on('editor-drop', async (evt: DragEvent, editor: Editor, markdownView: MarkdownView) => {
