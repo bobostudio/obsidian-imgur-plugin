@@ -1,9 +1,9 @@
 {
-	"id": "obsidian-imgur-plugin",
-	"name": "Obsidian Imgur Plugin",
+	"id": "imgur-tencent-cos",
+	"name": "Imgur Tencent COS Plugin",
 	"version": "1.0.0",
 	"minAppVersion": "1.0.0",
-	"description": "Upload images to Imgur from Obsidian.",
+	"description": "Upload images to Tencent COS for Imgur.",
 	"author": "bobostudio",
 	"authorUrl": "https://github.com/bobostudio",
 	"fundingUrl": "https://afdian.com/a/bobostudio",
