@@ -14,18 +14,24 @@
 ## 使用前准备
 
 1. 注册腾讯云账号并开通 COS 服务
+
+![开通 COS 服务](./images/open-cos.png)
 2. 创建存储桶，记录存储桶名称和所在地域
 3. 获取 SecretId 和 SecretKey
    - 访问 [腾讯云控制台](https://console.cloud.tencent.com/)
-   - 进入 "访问密钥" -> "API密钥管理"
+   - 进入 "访问密钥" -> [API密钥管理](https://console.cloud.tencent.com/cam/capi)
    - 创建或获取 SecretId 和 SecretKey
+
+![获取密钥](./images/get-secret.png)
 
 ## 安装方法
 
 1. 打开 Obsidian 设置
 2. 进入 "第三方插件" -> "浏览"
-3. 搜索 "Tencent COS Upload"
+3. 搜索 "Obsidian Imgur Plugin"
 4. 点击安装并启用插件
+
+![启用插件](./images/active.png)
 
 ## 配置说明
 
@@ -35,6 +41,8 @@
    - SecretKey：腾讯云 API 密钥 Key
    - Bucket：存储桶名称（例如：my-bucket-1250000000）
    - Region：存储桶所在地域（例如：ap-guangzhou）
+
+![配置](./images/settings.png)
 
 ## 使用方法
 
@@ -50,6 +58,10 @@
 1. 在文件列表中右键点击 Markdown 文件
 2. 选择 "上传图片到腾讯云COS"
 3. 插件会自动上传文件中的所有本地图片
+
+## 操作预览
+
+![操作预览](./images/preview.gif)
 
 ## 注意事项
 
