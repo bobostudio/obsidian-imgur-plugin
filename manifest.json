@@ -1,6 +1,6 @@
 {
 	"id": "imgur-tencent-cos",
-	"name": "Imgur Tencent COS Plugin",
+	"name": "Tencent COS for Imgur",
 	"version": "1.0.0",
 	"minAppVersion": "1.0.0",
 	"description": "Upload images to Tencent COS for Imgur.",
