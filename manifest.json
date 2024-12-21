@@ -1,11 +1,12 @@
 {
-	"id": "bobostudio-obsidian-imgur",
+	"id": "obsidian-imgur-plugin",
 	"name": "Obsidian Imgur Plugin",
 	"version": "1.0.0",
-	"minAppVersion": "0.15.0",
+	"minAppVersion": "1.0.0",
 	"description": "Upload images to Imgur from Obsidian.",
 	"author": "bobostudio",
 	"authorUrl": "https://github.com/bobostudio",
-	"fundingUrl": "https://github.com/bobostudio",
+	"fundingUrl": "https://afdian.com/a/bobostudio",
+	"helpUrl": "https://github.com/bobostudio/obsidian-imgur-plugin/README.md",
 	"isDesktopOnly": false
 }

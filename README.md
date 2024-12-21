@@ -1,94 +1,83 @@
-# Obsidian Sample Plugin
+# Obsidian 腾讯云 COS 图床插件
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+这是一个用于 Obsidian 的图片上传插件，可以将笔记中的图片自动上传至腾讯云 COS 对象存储，实现图片的云端存储和管理。
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+## 功能特点
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open Sample Modal" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+- 支持拖拽上传图片
+- 支持复制粘贴上传图片
+- 支持右键菜单批量上传笔记中的本地图片
+- 自动替换本地图片链接为云端链接
+- 上传完成后自动删除本地图片文件
+- 支持自定义存储桶地域选择
 
-## First time developing plugins?
+## 使用前准备
 
-Quick starting guide for new plugin devs:
+1. 注册腾讯云账号并开通 COS 服务
+2. 创建存储桶，记录存储桶名称和所在地域
+3. 获取 SecretId 和 SecretKey
+   - 访问 [腾讯云控制台](https://console.cloud.tencent.com/)
+   - 进入 "访问密钥" -> "API密钥管理"
+   - 创建或获取 SecretId 和 SecretKey
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+## 安装方法
 
-## Releasing new releases
+1. 打开 Obsidian 设置
+2. 进入 "第三方插件" -> "浏览"
+3. 搜索 "Tencent COS Upload"
+4. 点击安装并启用插件
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+## 配置说明
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
+1. 进入插件设置页面
+2. 填写以下信息：
+   - SecretId：腾讯云 API 密钥 ID
+   - SecretKey：腾讯云 API 密钥 Key
+   - Bucket：存储桶名称（例如：my-bucket-1250000000）
+   - Region：存储桶所在地域（例如：ap-guangzhou）
 
-## Adding your plugin to the community plugin list
+## 使用方法
 
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
+### 方式一：拖拽上传
+- 直接将图片文件拖拽到编辑器中
+- 插件会自动上传图片并插入云端链接
 
-## How to use
+### 方式二：复制粘贴
+- 复制图片后，直接在编辑器中粘贴
+- 插件会自动上传图片并插入云端链接
 
-- Clone this repo.
-- Make sure your NodeJS is at least v16 (`node --version`).
-- `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
+### 方式三：右键菜单批量上传
+1. 在文件列表中右键点击 Markdown 文件
+2. 选择 "上传图片到腾讯云COS"
+3. 插件会自动上传文件中的所有本地图片
 
-## Manually installing the plugin
+## 注意事项
 
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
+1. 首次使用请确保已正确配置腾讯云 COS 相关信息
+2. 上传前请确保网络连接正常
+3. 建议定期检查存储桶用量，避免超出配额
+4. 请妥善保管 SecretId 和 SecretKey，不要泄露给他人
 
-## Improve code quality with eslint (optional)
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- To use eslint with this project, make sure to install eslint from terminal:
-  - `npm install -g eslint`
-- To use eslint to analyze this project use this command:
-  - `eslint main.ts`
-  - eslint will then create a report with suggestions for code improvement by file and line number.
-- If your source code is in a folder, such as `src`, you can use eslint with this command to analyze all files in that folder:
-  - `eslint .\src\`
+## 常见问题
 
-## Funding URL
+1. **上传失败怎么办？**
+   - 检查网络连接
+   - 验证配置信息是否正确
+   - 查看控制台错误信息
 
-You can include funding URLs where people who use your plugin can financially support it.
+2. **如何修改已上传图片的存储位置？**
+   - 目前不支持修改已上传图片的存储位置
+   - 建议在上传前确认好存储桶配置
 
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
+## 支持与反馈
 
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
-```
+如果您在使用过程中遇到任何问题，或有功能建议，请通过以下方式反馈：
 
-If you have multiple URLs, you can also do:
+- 在 GitHub 上提交 Issue
+- 发送邮件至：[15919854639@163.com]
 
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
-    }
-}
-```
+## 许可证
 
-## API Documentation
+本项目采用 MIT 许可证。详见 [LICENSE](LICENSE) 文件。
 
-See https://github.com/obsidianmd/obsidian-api
+Copyright (c) 2024 bobostudio
