@@ -33,7 +33,7 @@ export default class ImgurPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
-		
+
 		// 检查必要的配置是否已设置
 		if (!this.settings.secretId || !this.settings.secretKey || !this.settings.bucket) {
 			new Notice("请先在设置中配置腾讯云 COS 信息！");
@@ -47,28 +47,28 @@ export default class ImgurPlugin extends Plugin {
 				console.error('Plugin initialization error:', error);
 			}
 		}
-		
+
 		// 拖拽图片上传处理
 		this.registerEvent(
 			this.app.workspace.on('editor-drop', async (evt: DragEvent, editor: Editor, markdownView: MarkdownView) => {
 				evt.preventDefault();
 				evt.stopPropagation();
-				console.log("检测到编辑器拖拽事件");
-				
+
+
 				const files = evt.dataTransfer?.files;
-				console.log("拖拽的文件:", files);
-				
+
+
 				if (!files || files.length === 0) {
-					console.log("没有文件被拖拽");
+
 					return;
 				}
 
 				for (let i = 0; i < files.length; i++) {
 					const file = files[i];
-					console.log("处理文件:", file.name, file.type);
-					
+
+
 					if (!file.type.startsWith('image/')) {
-						console.log("不是图片文件，跳过:", file.type);
+
 						continue;
 					}
 
@@ -82,7 +82,7 @@ export default class ImgurPlugin extends Plugin {
 
 						// 上传到腾讯云
 						const url = await this.uploader.uploadFile(file);
-						
+
 						// 插入新的远程图片链接
 						const pos = editor.getCursor();
 						editor.replaceRange(`![${file.name}](${url})`, pos);
@@ -99,11 +99,11 @@ export default class ImgurPlugin extends Plugin {
 						for (const match of matches) {
 							const imagePath = match[1];
 							const imageFile = this.app.vault.getAbstractFileByPath(imagePath);
-							
+
 							if (imageFile instanceof TFile) {
-								await this.app.vault.delete(imageFile);
-								console.log("已删除本地图片:", imagePath);
-								
+								await this.app.fileManager.trashFile(imageFile);
+
+
 								// 替换文件内容中的本地图片链接
 								const newContent = content.replace(`![[${imagePath}]]`, '');
 								await this.app.vault.modify(activeFile, newContent);
@@ -122,8 +122,8 @@ export default class ImgurPlugin extends Plugin {
 		this.registerEvent(
 			this.app.workspace.on('editor-paste', async (evt: ClipboardEvent, editor: Editor, markdownView: MarkdownView) => {
 				const files = evt.clipboardData?.files;
-				console.log("粘贴的文件:", files);
-				
+
+
 				if (!files || files.length === 0) return;
 
 				for (let i = 0; i < files.length; i++) {
@@ -131,7 +131,7 @@ export default class ImgurPlugin extends Plugin {
 					if (!file.type.startsWith('image/')) continue;
 
 					evt.preventDefault();
-					
+
 					try {
 						// 获取当前文件
 						const activeFile = markdownView.file;
@@ -142,7 +142,7 @@ export default class ImgurPlugin extends Plugin {
 
 						// 上传到腾讯云
 						const url = await this.uploader.uploadFile(file);
-						
+
 						// 插入新的远程图片链接
 						const pos = editor.getCursor();
 						editor.replaceRange(`![${file.name}](${url})`, pos);
@@ -159,11 +159,11 @@ export default class ImgurPlugin extends Plugin {
 						for (const match of matches) {
 							const imagePath = match[1];
 							const imageFile = this.app.vault.getAbstractFileByPath(imagePath);
-							
+
 							if (imageFile instanceof TFile) {
-								await this.app.vault.delete(imageFile);
-								console.log("已删除本地图片:", imagePath);
-								
+								await this.app.fileManager.trashFile(imageFile);
+
+
 								// 替换文件内容中的本地图片链接
 								const newContent = content.replace(`![[${imagePath}]]`, '');
 								await this.app.vault.modify(activeFile, newContent);
@@ -191,11 +191,11 @@ export default class ImgurPlugin extends Plugin {
 						.onClick(async () => {
 							try {
 								const content = await this.app.vault.read(file);
-								
+
 								// 匹配 Obsidian 格式的图片链接
 								const imageRegex = /!\[\[([^\]]+)\]\]/g;
 								const matches = [...content.matchAll(imageRegex)];
-								
+
 								if (matches.length === 0) {
 									new Notice("未找到本地图片");
 									return;
@@ -221,7 +221,7 @@ export default class ImgurPlugin extends Plugin {
 									}
 
 									if (!imageFile) {
-										console.log("找不到图片:", imagePath);
+
 										continue;
 									}
 
@@ -230,24 +230,24 @@ export default class ImgurPlugin extends Plugin {
 										const imageBlob = new Blob([imageArrayBuffer]);
 										// 去除图片路径空白
 										const imageToUpload = new File([imageBlob], imageFile.name.replace(/\s/g, ''), { type: 'image/png' });
-										console.log("上传的图片:", imageToUpload);
+
 										const url = await this.uploader.uploadFile(imageToUpload);
-										
+
 										// 替换当前图片链接
 										newContent = newContent.replace(
 											`![[${imagePath}]]`,
 											`![${imageFile.name}](${url})`
 										);
-										
+
 										// 删除本地图片文件
-										await this.app.vault.delete(imageFile);
+										await this.app.fileManager.trashFile(imageFile);
 										new Notice(`图片 ${imageFile.name} 上传成功`);
 									} catch (error) {
 										new Notice(`图片 ${imagePath} 上传失败: ${error.message}`);
 										console.error('Upload error:', error);
 									}
 								}
-								
+
 								// 一次性更新文件内容
 								if (newContent !== content) {
 									await this.app.vault.modify(file, newContent);
@@ -261,73 +261,17 @@ export default class ImgurPlugin extends Plugin {
 				});
 			})
 		);
-		
-		// This creates an icon in the left ribbon.
-		// const ribbonIconEl = this.addRibbonIcon(
-		// 	"dice",
-		// 	"Sample Plugin",
-		// 	(evt: MouseEvent) => {
-		// 		// Called when the user clicks the icon.
-		// 		new Notice("你的图床插件已启动1!");
-		// 	}
-		// );
-		// // Perform additional things with the ribbon
-		// ribbonIconEl.addClass("my-plugin-ribbon-class");
 
 		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
 		const statusBarItemEl = this.addStatusBarItem();
 		statusBarItemEl.setText("Status Bar Text");
 
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: "open-sample-modal-simple",
-			name: "Open sample modal (simple)",
-			callback: () => {
-				new SampleModal(this.app).open();
-			},
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: "sample-editor-command",
-			name: "Sample editor command",
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection("Sample Editor Command");
-			},
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: "open-sample-modal-complex",
-			name: "Open sample modal (complex)",
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView =
-					this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-			},
-		});
-
 		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, "click", (evt: MouseEvent) => {
-			console.log("click", evt);
-		});
+		this.addSettingTab(new ImgurSettingTab(this.app, this));
 
 		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
 		this.registerInterval(
-			window.setInterval(() => console.log("setInterval"), 5 * 60 * 1000)
+			window.setInterval(() => { }, 5 * 60 * 1000)
 		);
 	}
 
@@ -350,23 +294,8 @@ export default class ImgurPlugin extends Plugin {
 
 }
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
 
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.setText("Woah!");
-	}
-
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
-	}
-}
-
-class SampleSettingTab extends PluginSettingTab {
+class ImgurSettingTab extends PluginSettingTab {
 	plugin: ImgurPlugin;
 
 	constructor(app: App, plugin: ImgurPlugin) {
@@ -388,7 +317,7 @@ class SampleSettingTab extends PluginSettingTab {
 					.setPlaceholder("输入 SecretId")
 					.setValue(this.plugin.settings.secretId)
 					.onChange(async (value) => {
-						this.plugin.settings.secretId = value;
+						this.plugin.settings.secretId = value.trim();
 						await this.plugin.saveSettings();
 					})
 			);
@@ -401,7 +330,7 @@ class SampleSettingTab extends PluginSettingTab {
 					.setPlaceholder("输入 SecretKey")
 					.setValue(this.plugin.settings.secretKey)
 					.onChange(async (value) => {
-						this.plugin.settings.secretKey = value;
+						this.plugin.settings.secretKey = value.trim();
 						await this.plugin.saveSettings();
 					})
 			);
@@ -414,7 +343,7 @@ class SampleSettingTab extends PluginSettingTab {
 					.setPlaceholder("例如：my-bucket-1250000000")
 					.setValue(this.plugin.settings.bucket)
 					.onChange(async (value) => {
-						this.plugin.settings.bucket = value;
+						this.plugin.settings.bucket = value.trim();
 						await this.plugin.saveSettings();
 					})
 			);
@@ -431,7 +360,7 @@ class SampleSettingTab extends PluginSettingTab {
 					.addOption("ap-hongkong", "香港")
 					.setValue(this.plugin.settings.region)
 					.onChange(async (value) => {
-						this.plugin.settings.region = value;
+						this.plugin.settings.region = value.trim();
 						await this.plugin.saveSettings();
 					});
 			});
@@ -444,8 +373,8 @@ class COSUploader {
 
 	constructor(settings: ImgurPluginSettings) {
 		this.settings = settings;
-		console.log("初始化 COS 设置:", settings);
-		
+
+
 		if (!settings.secretId || !settings.secretKey) {
 			throw new Error("请先配置腾讯云 SecretId 和 SecretKey");
 		}
@@ -462,8 +391,13 @@ class COSUploader {
 			throw new Error("请先配置存储桶和地域信息");
 		}
 
-		const fileName = `${Date.now()}-${file.name}`;
-		
+		// 修改文件名：将空格替换为短横线，并保持原始扩展名
+		const originalName = file.name;
+		const extension = originalName.split('.').pop();
+		const nameWithoutExt = originalName.substring(0, originalName.lastIndexOf('.'));
+		const processedName = nameWithoutExt.replace(/\s+/g, '-');
+		const fileName = `${Date.now()}-${processedName}.${extension}`;
+
 		return new Promise((resolve, reject) => {
 			this.cos.putObject({
 				Bucket: this.settings.bucket,
@@ -476,7 +410,7 @@ class COSUploader {
 					reject(err);
 					return;
 				}
-				
+
 				const url = `https://${this.settings.bucket}.cos.${this.settings.region}.myqcloud.com/${fileName}`;
 				resolve(url);
 			});
