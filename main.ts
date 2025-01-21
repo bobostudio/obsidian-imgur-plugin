@@ -33,22 +33,35 @@ export default class ImgurPlugin extends Plugin {
 	async onload() {
 		await this.loadSettings();
 
-		// 检查必要的配置是否已设置
+		// 初始化上传器的函数
+		const initUploader = () => {
+			// 检查所有必要的配置是否都已设置
+			if (
+				this.settings.secretId &&
+				this.settings.secretKey &&
+				this.settings.bucket &&
+				this.settings.region
+			) {
+				try {
+					this.uploader = new COSUploader(this.settings);
+					new Notice("腾讯云 COS 配置已更新！");
+				} catch (error) {
+					new Notice(`插件初始化失败：${error.message}`);
+					console.error("Plugin initialization error:", error);
+				}
+			}
+		};
+
+		// 初始检查
 		if (
 			!this.settings.secretId ||
 			!this.settings.secretKey ||
-			!this.settings.bucket
+			!this.settings.bucket ||
+			!this.settings.region
 		) {
 			new Notice("请先在设置中配置腾讯云 COS 信息！");
-			// 不初始化 uploader，等待用户配置
 		} else {
-			try {
-				this.uploader = new COSUploader(this.settings);
-				new Notice("腾讯云 COS 图床插件已启动！");
-			} catch (error) {
-				new Notice(`插件初始化失败：${error.message}`);
-				console.error("Plugin initialization error:", error);
-			}
+			initUploader();
 		}
 
 		// 拖拽图片上传处理
@@ -312,7 +325,7 @@ export default class ImgurPlugin extends Plugin {
 		);
 
 		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new ImgurSettingTab(this.app, this));
+		this.addSettingTab(new ImgurSettingTab(this.app, this, initUploader));
 
 		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
 		this.registerInterval(window.setInterval(() => {}, 5 * 60 * 1000));
@@ -380,15 +393,22 @@ export default class ImgurPlugin extends Plugin {
 
 class ImgurSettingTab extends PluginSettingTab {
 	plugin: ImgurPlugin;
+	private initUploader: () => void;
 
-	constructor(app: App, plugin: ImgurPlugin) {
+	constructor(app: App, plugin: ImgurPlugin, initUploader: () => void) {
 		super(app, plugin);
 		this.plugin = plugin;
+		this.initUploader = initUploader;
 	}
 
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
+
+		// 创建一个防抖函数来延迟初始化
+		const debouncedInit = this.debounce(() => {
+			this.initUploader();
+		}, 2000); // 2秒延迟
 
 		new Setting(containerEl)
 			.setName("Secret Id")
@@ -400,6 +420,7 @@ class ImgurSettingTab extends PluginSettingTab {
 					.onChange(async (value) => {
 						this.plugin.settings.secretId = value.trim();
 						await this.plugin.saveSettings();
+						debouncedInit();
 					})
 			);
 
@@ -413,6 +434,7 @@ class ImgurSettingTab extends PluginSettingTab {
 					.onChange(async (value) => {
 						this.plugin.settings.secretKey = value.trim();
 						await this.plugin.saveSettings();
+						debouncedInit();
 					})
 			);
 
@@ -426,6 +448,7 @@ class ImgurSettingTab extends PluginSettingTab {
 					.onChange(async (value) => {
 						this.plugin.settings.bucket = value.trim();
 						await this.plugin.saveSettings();
+						debouncedInit();
 					})
 			);
 
@@ -463,6 +486,19 @@ class ImgurSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					})
 			);
+	}
+
+	// 添加防抖函数
+	private debounce(func: Function, wait: number) {
+		let timeout: NodeJS.Timeout;
+		return function executedFunction(...args: any[]) {
+			const later = () => {
+				clearTimeout(timeout);
+				func(...args);
+			};
+			clearTimeout(timeout);
+			timeout = setTimeout(later, wait);
+		};
 	}
 }
 
