@@ -28,6 +28,18 @@
 
 ![获取密钥](./images/get-secret.png)
 
+## 跨域访问 CORS 设置（注意）
+
+> 复制到**来源 Origin** 的输入框内
+
+```shell
+app://obsidian.md
+```
+![获取密钥](./images/CORS-1.png)
+![获取密钥](./images/CORS-2.png)
+
+
+
 ## 安装方法
 
 1. 打开 Obsidian 设置
@@ -44,7 +56,7 @@
     - SecretId：腾讯云 API 密钥 ID
     - SecretKey：腾讯云 API 密钥 Key
     - Bucket：存储桶名称（例如：my-bucket-1250000000）
-    - Region：存储桶所在地域（例如：ap-guangzhou）
+    - Region：选择你开启存储桶所在地域
     - 存储路径前缀：文件在 COS 中的存储路径（例如：images）
 
 ## 使用方法
