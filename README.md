@@ -35,8 +35,8 @@
 ```shell
 app://obsidian.md
 ```
-![获取密钥](./images/CORS-1.png)
-![获取密钥](./images/CORS-2.png)
+![跨域访问 CORS 设置1](./images/CORS-1.png)
+![跨域访问 CORS 设置2](./images/CORS-2.png)
 
 
 
@@ -58,6 +58,16 @@ app://obsidian.md
     - Bucket：存储桶名称（例如：my-bucket-1250000000）
     - Region：选择你开启存储桶所在地域
     - 存储路径前缀：文件在 COS 中的存储路径（例如：images）
+  
+> 存储路径前缀说明
+
+比如你设置 `img`
+
+![存储路径前缀说明1](./images/prefix-1.png)
+
+那你的 COS 的图片就会上传到 `/img` 文件夹下
+
+![存储路径前缀说明1](./images/prefix-2.png)
 
 ## 使用方法
 
