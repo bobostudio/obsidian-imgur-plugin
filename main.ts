@@ -33,6 +33,12 @@ export default class ImgurPlugin extends Plugin {
 	async onload() {
 		await this.loadSettings();
 
+		// 添加一个标记来记录是否已经初始化过
+		let isFirstInitialization = !this.settings.secretId || 
+			!this.settings.secretKey || 
+			!this.settings.bucket || 
+			!this.settings.region;
+
 		// 初始化上传器的函数
 		const initUploader = () => {
 			// 检查所有必要的配置是否都已设置
@@ -44,7 +50,11 @@ export default class ImgurPlugin extends Plugin {
 			) {
 				try {
 					this.uploader = new COSUploader(this.settings);
-					new Notice("腾讯云 COS 配置已更新！");
+					// 只在首次配置时显示通知
+					if (isFirstInitialization) {
+						new Notice("腾讯云 COS 配置已完成！");
+						isFirstInitialization = false;
+					}
 				} catch (error) {
 					new Notice(`插件初始化失败：${error.message}`);
 					console.error("Plugin initialization error:", error);
@@ -523,72 +533,8 @@ class COSUploader {
 			Protocol: "https:",
 		});
 
-		// 启动定时更新
-		this.startUrlUpdateInterval();
 	}
 
-	private async updateAllPresignedUrls() {
-		// 防止重复更新
-		if (this.updating) {
-			console.log("正在更新中，跳过本次更新");
-			return;
-		}
-
-		this.updating = true;
-		console.log("检查预签名URL是否需要更新");
-		console.log("当前缓存的文件数:", this.urlCache.size);
-
-		try {
-			const promises = Array.from(this.urlCache.keys()).map(
-				async (key) => {
-					try {
-						// 从URL中提取过期时间
-						const currentUrl = this.urlCache.get(key);
-						if (!currentUrl) return;
-
-						const urlObj = new URL(currentUrl);
-						const signTime = urlObj.searchParams.get("q-sign-time");
-						if (!signTime) return;
-
-						const [_, expireTime] = signTime.split(";").map(Number);
-						const now = Math.floor(Date.now() / 1000);
-						const oneDayInSeconds = 24 * 60 * 60;
-
-						// 只有当URL将在24小时内过期时才更新
-						if (expireTime - now <= oneDayInSeconds) {
-							console.log(`文件 ${key} 的URL即将过期，正在更新`);
-							const newUrl = await this.getSignedUrl(
-								key,
-								30 * 24 * 60 * 60
-							);
-							this.urlCache.set(key, newUrl);
-							console.log(`文件 ${key} 的URL更新成功`);
-						} else {
-							console.log(`文件 ${key} 的URL仍然有效，无需更新`);
-						}
-					} catch (error) {
-						console.error(
-							`检查/更新预签名URL失败 (${key}):`,
-							error
-						);
-					}
-				}
-			);
-
-			await Promise.all(promises);
-		} finally {
-			this.updating = false;
-			console.log("URL检查/更新完成");
-		}
-	}
-
-	private startUrlUpdateInterval() {
-		console.log("启动定时检查");
-		// 每天检查一次是否需要更新
-		this.updateInterval = setInterval(() => {
-			this.updateAllPresignedUrls();
-		}, 24 * 60 * 60 * 1000); // 24小时的毫秒数
-	}
 
 	// 在插件卸载时清理定时器
 	public cleanup() {
@@ -633,10 +579,10 @@ class COSUploader {
 					}
 
 					try {
-						// 生成带签名的临时访问URL，有效期为30天
+						// 生成带签名的临时访问URL，有效期为80年
 						const url = await this.getSignedUrl(
 							fullPath,
-							30 * 24 * 60 * 60
+							80 * 365 * 24 * 60 * 60
 						);
 						this.urlCache.set(fullPath, url);
 						resolve(url);
@@ -650,7 +596,7 @@ class COSUploader {
 
 	private getSignedUrl(
 		fileName: string,
-		expires: number = 30 * 24 * 60 * 60 // 默认30天
+		expires: number = 80 * 365 * 24 * 60 * 60 // 默认80年
 	): Promise<string> {
 		return new Promise((resolve, reject) => {
 			this.cos.getObjectUrl(
