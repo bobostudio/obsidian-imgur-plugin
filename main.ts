@@ -472,7 +472,7 @@ class ImgurSettingTab extends PluginSettingTab {
 					.addOption("ap-shanghai", "上海")
 					.addOption("ap-chengdu", "成都")
 					.addOption("ap-hongkong", "香港")
-					.addOption("ap-singapore", "南京")
+					.addOption("ap-nanjing", "南京")
 					.addOption("ap-chongqing", "重庆")
 					.setValue(this.plugin.settings.region)
 					.onChange(async (value) => {
