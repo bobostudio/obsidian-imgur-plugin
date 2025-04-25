@@ -34,9 +34,10 @@ export default class ImgurPlugin extends Plugin {
 		await this.loadSettings();
 
 		// 添加一个标记来记录是否已经初始化过
-		let isFirstInitialization = !this.settings.secretId || 
-			!this.settings.secretKey || 
-			!this.settings.bucket || 
+		let isFirstInitialization =
+			!this.settings.secretId ||
+			!this.settings.secretKey ||
+			!this.settings.bucket ||
 			!this.settings.region;
 
 		// 初始化上传器的函数
@@ -331,6 +332,75 @@ export default class ImgurPlugin extends Plugin {
 							}
 						});
 				});
+
+				menu.addItem((item) => {
+					item.setTitle("刷新图片有效期")
+						.setIcon("refresh-cw")
+						.onClick(async () => {
+							try {
+								const content = await this.app.vault.read(file);
+
+								// 匹配 Obsidian 格式的图片链接
+								const imageRegex = /!\[.*?\]\((.*?)\)/g;
+								const matches = [
+									...content.matchAll(imageRegex),
+								];
+
+								if (matches.length === 0) {
+									new Notice("未找到图片链接");
+									return;
+								}
+
+								let newContent = content;
+								for (const match of matches) {
+									const imageUrl = match[1];
+
+									try {
+										// 提取文件路径
+										const urlPath = new URL(imageUrl)
+											.pathname;
+										const fileName = decodeURIComponent(
+											urlPath.substring(
+												urlPath.lastIndexOf("/") + 1
+											)
+										);
+
+										// 刷新图片有效期
+										const refreshedUrl =
+											await this.uploader.refreshSignedUrl(
+												fileName
+											);
+
+										// 替换当前图片链接
+										newContent = newContent.replace(
+											imageUrl,
+											refreshedUrl
+										);
+										new Notice(
+											`图片 ${fileName} 有效期已刷新`
+										);
+									} catch (error) {
+										new Notice(
+											`刷新图片 ${imageUrl} 失败: ${error.message}`
+										);
+										console.error("Refresh error:", error);
+									}
+								}
+
+								// 一次性更新文件内容
+								if (newContent !== content) {
+									await this.app.vault.modify(
+										file,
+										newContent
+									);
+									new Notice("所有图片链接有效期已刷新");
+								}
+							} catch (error) {
+								new Notice(`处理失败: ${error.message}`);
+								console.error("Process error:", error);
+							}
+						});
+				});
 			})
 		);
 
@@ -499,9 +569,9 @@ class ImgurSettingTab extends PluginSettingTab {
 	}
 
 	// 添加防抖函数
-	private debounce(func: Function, wait: number) {
+	private debounce(func: (...args: unknown[]) => void, wait: number) {
 		let timeout: NodeJS.Timeout;
-		return function executedFunction(...args: any[]) {
+		return function executedFunction(...args: unknown[]) {
 			const later = () => {
 				clearTimeout(timeout);
 				func(...args);
@@ -516,7 +586,6 @@ class COSUploader {
 	private cos: any;
 	private settings: ImgurPluginSettings;
 	private urlCache: Map<string, string>;
-	private updating: boolean = false;
 	private updateInterval: NodeJS.Timeout | null = null;
 
 	constructor(settings: ImgurPluginSettings) {
@@ -532,9 +601,7 @@ class COSUploader {
 			SecretKey: settings.secretKey,
 			Protocol: "https:",
 		});
-
 	}
-
 
 	// 在插件卸载时清理定时器
 	public cleanup() {
@@ -603,11 +670,11 @@ class COSUploader {
 				{
 					Bucket: this.settings.bucket,
 					Region: this.settings.region,
-					Key: fileName,
+					Key: this.settings.prefix + "/" + fileName,
 					Sign: true,
 					Expires: expires,
 				},
-				(err: any, data: any) => {
+				(err: Error | null, data: { Url: string }) => {
 					if (err) {
 						reject(err);
 						return;
@@ -620,5 +687,10 @@ class COSUploader {
 				}
 			);
 		});
+	}
+
+	// 新增方法：刷新图片有效期
+	async refreshSignedUrl(fileName: string): Promise<string> {
+		return this.getSignedUrl(fileName, 80 * 365 * 24 * 60 * 60); // 默认80年
 	}
 }
