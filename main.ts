@@ -16,6 +16,7 @@ interface ImgurPluginSettings {
 	bucket: string;
 	region: string;
 	prefix: string;
+	expiration: number; // 新增字段：有效期（秒）
 }
 
 const DEFAULT_SETTINGS: ImgurPluginSettings = {
@@ -24,6 +25,7 @@ const DEFAULT_SETTINGS: ImgurPluginSettings = {
 	bucket: "",
 	region: "",
 	prefix: "",
+	expiration: 12 * 30 * 24 * 60 * 60, // 默认1年（以秒为单位）
 };
 
 export default class ImgurPlugin extends Plugin {
@@ -566,6 +568,28 @@ class ImgurSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					})
 			);
+
+		new Setting(containerEl)
+			.setName("图片有效期")
+			.setDesc("设置图片链接的有效期")
+			.addDropdown((dropdown) => {
+				dropdown
+					.addOption((1 * 30 * 24 * 60 * 60).toString(), "1个月")
+					.addOption((6 * 30 * 24 * 60 * 60).toString(), "半年")
+					.addOption((12 * 30 * 24 * 60 * 60).toString(), "1年")
+					.addOption((36 * 30 * 24 * 60 * 60).toString(), "3年")
+					.addOption((60 * 30 * 24 * 60 * 60).toString(), "5年")
+					.setValue(this.plugin.settings.expiration.toString())
+					.onChange(async (value) => {
+						const expiration = parseInt(value, 10);
+						if (!isNaN(expiration) && expiration > 0) {
+							this.plugin.settings.expiration = expiration;
+							await this.plugin.saveSettings();
+						} else {
+							new Notice("请选择有效的时间选项");
+						}
+					});
+			});
 	}
 
 	// 添加防抖函数
@@ -583,7 +607,7 @@ class ImgurSettingTab extends PluginSettingTab {
 }
 
 class COSUploader {
-	private cos: any;
+	private cos: COS; // Specify the type for the COS instance
 	private settings: ImgurPluginSettings;
 	private urlCache: Map<string, string>;
 	private updateInterval: NodeJS.Timeout | null = null;
@@ -638,7 +662,7 @@ class COSUploader {
 					Key: fullPath,
 					Body: file,
 				},
-				async (err: any, data: any) => {
+				async (err: COS.CosError | null, data: COS.PutObjectResult) => {
 					if (err) {
 						console.error("上传错误:", err);
 						reject(err);
@@ -646,11 +670,8 @@ class COSUploader {
 					}
 
 					try {
-						// 生成带签名的临时访问URL，有效期为80年
-						const url = await this.getSignedUrl(
-							fullPath,
-							80 * 365 * 24 * 60 * 60
-						);
+						// 生成带签名的临时访问URL，有效期为配置的有效期
+						const url = await this.getSignedUrl(fullPath);
 						this.urlCache.set(fullPath, url);
 						resolve(url);
 					} catch (error) {
@@ -663,18 +684,20 @@ class COSUploader {
 
 	private getSignedUrl(
 		fileName: string,
-		expires: number = 80 * 365 * 24 * 60 * 60 // 默认80年
+		prefix?: string,
+		expires?: number
 	): Promise<string> {
+		const expiration = expires || this.settings.expiration; // 使用配置的有效期
 		return new Promise((resolve, reject) => {
 			this.cos.getObjectUrl(
 				{
 					Bucket: this.settings.bucket,
 					Region: this.settings.region,
-					Key: this.settings.prefix + "/" + fileName,
+					Key: prefix ? prefix + fileName : fileName,
 					Sign: true,
-					Expires: expires,
+					Expires: expiration,
 				},
-				(err: Error | null, data: { Url: string }) => {
+				(err: COS.CosError | null, data: COS.GetObjectUrlResult) => {
 					if (err) {
 						reject(err);
 						return;
@@ -691,6 +714,6 @@ class COSUploader {
 
 	// 新增方法：刷新图片有效期
 	async refreshSignedUrl(fileName: string): Promise<string> {
-		return this.getSignedUrl(fileName, 80 * 365 * 24 * 60 * 60); // 默认80年
+		return this.getSignedUrl(fileName, this.settings.prefix + "/"); // 使用配置的有效期
 	}
 }
