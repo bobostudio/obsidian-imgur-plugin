@@ -38,9 +38,9 @@ app://obsidian.md
 ![跨域访问 CORS 设置1](./images/CORS-1.png)
 ![跨域访问 CORS 设置2](./images/CORS-2.png)
 
+> ❗❗❗ **注意想在手机上使用需要把 `app://obsidian.md` 改成 `*`**
 
-
-## 安装方法
+## 电脑端安装方法
 
 1. 打开 Obsidian 设置
 2. 进入 "第三方插件" -> "浏览"
