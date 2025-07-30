@@ -51,17 +51,17 @@ app://obsidian.md
 6. 笔记上传图片
 7. 右键点击上传图片到腾讯云 COS，一键上传这篇笔记的全部图片
 
-<img src="./images/ios1.png" width='200'/>
-<img src="./images/ios2.png" width='200'/>
-<img src="./images/ios3.png" width='200'/>
-<img src="./images/ios4.png" width='200'/>
-<img src="./images/ios5.png" width='200'/>
-<img src="./images/ios6.jpg" width='200'/>
-<img src="./images/ios7.png" width='200'/>
-<img src="./images/ios8.jpg" width='200'/>
-<img src="./images/ios9.jpg" width='200'/>
-<img src="./images/ios10.jpg" width='200'/>
-<img src="./images/ios11.jpg" width='200'/>
+<img src="./images/ios1.png" width='300'/>
+<img src="./images/ios2.png" width='300'/>
+<img src="./images/ios3.png" width='300'/>
+<img src="./images/ios4.png" width='300'/>
+<img src="./images/ios5.png" width='300'/>
+<img src="./images/ios6.jpg" width='300'/>
+<img src="./images/ios7.png" width='300'/>
+<img src="./images/ios8.jpg" width='300'/>
+<img src="./images/ios9.jpg" width='300'/>
+<img src="./images/ios10.jpg" width='300'/>
+<img src="./images/ios11.jpg" width='300'/>
 
 ## 电脑端安装方法
 
