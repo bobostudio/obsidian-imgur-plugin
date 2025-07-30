@@ -51,11 +51,11 @@ app://obsidian.md
 6. 笔记上传图片
 7. 右键点击上传图片到腾讯云 COS，一键上传这篇笔记的全部图片
 
-| ![](./images/ios1.png){width=250}  | ![](./images/ios2.png){width=250}  | ![](./images/ios3.png){width=250} |
-| :--------------------------------: | :--------------------------------: | :-------------------------------: |
-| ![](./images/ios4.png){width=250}  | ![](./images/ios5.png){width=250}  | ![](./images/ios6.jpg){width=250} |
-| ![](./images/ios7.png){width=250}  | ![](./images/ios8.jpg){width=250}  | ![](./images/ios9.jpg){width=250} |
-| ![](./images/ios10.jpg){width=250} | ![](./images/ios11.jpg){width=250} |                                   |
+|  ![](./images/ios1.png){1}  |  ![](./images/ios2.png){2}  | ![](./images/ios3.png){3} |
+| :-------------------------: | :-------------------------: | :-----------------------: |
+|  ![](./images/ios4.png){4}  |  ![](./images/ios5.png){5}  | ![](./images/ios6.jpg){6} |
+|  ![](./images/ios7.png){7}  |  ![](./images/ios8.jpg){8}  | ![](./images/ios9.jpg){9} |
+| ![](./images/ios10.jpg){10} | ![](./images/ios11.jpg){11} |                           |
 
 ## 电脑端安装方法
 
