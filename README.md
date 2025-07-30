@@ -35,10 +35,33 @@
 ```shell
 app://obsidian.md
 ```
+
 ![跨域访问 CORS 设置1](./images/CORS-1.png)
 ![跨域访问 CORS 设置2](./images/CORS-2.png)
 
 > ❗❗❗ **注意想在手机上使用需要把 `app://obsidian.md` 改成 `*`**
+
+## 手机端安装方法(以 IOS 为例，安卓同理)
+
+1. 打开 Obsidian 设置
+2. 点击 Community plugins
+3. 搜索 tencent
+4. 安装并开启插件
+5. 填写图床信息
+6. 笔记上传图片
+7. 右键点击上传图片到腾讯云 COS，一键上传这篇笔记的全部图片
+
+<img src="./images/ios1.png" width='120'/>
+<img src="./images/ios2.png" width='120'/>
+<img src="./images/ios3.png" width='120'/>
+<img src="./images/ios4.png" width='120'/>
+<img src="./images/ios5.png" width='120'/>
+<img src="./images/ios6.jpg" width='120'/>
+<img src="./images/ios7.png" width='120'/>
+<img src="./images/ios8.jpg" width='120'/>
+<img src="./images/ios9.jpg" width='120'/>
+<img src="./images/ios10.jpg" width='120'/>
+<img src="./images/ios11.jpg" width='120'/>
 
 ## 电脑端安装方法
 
@@ -58,7 +81,7 @@ app://obsidian.md
     - Bucket：存储桶名称（例如：my-bucket-1250000000）
     - Region：选择你开启存储桶所在地域
     - 存储路径前缀：文件在 COS 中的存储路径（例如：images）
-  
+
 > 存储路径前缀说明
 
 比如你设置 `img`
@@ -102,6 +125,7 @@ app://obsidian.md
 ## 常见问题
 
 1. **上传失败怎么办？**
+
     - 检查网络连接
     - 验证配置信息是否正确
     - 查看控制台错误信息
