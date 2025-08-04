@@ -61,7 +61,7 @@ app://obsidian.md
 
 1. 打开 Obsidian 设置
 2. 进入 "第三方插件" -> "浏览"
-3. 搜索 "Obsidian Imgur Plugin"
+3. 搜索 "Obsidian Imgur Plugin" 或者浏览器访问 [Obsidian Imgur Plugin](obsidian://show-plugin?id=imgur-tencent-cos)
 4. 点击安装并启用插件
 
 ![启用插件](./images/active.png)
