@@ -1,8 +1,10 @@
 import COS from "cos-js-sdk-v5";
 import {
 	App,
+	ButtonComponent,
 	Editor,
 	MarkdownView,
+	Modal,
 	Notice,
 	Plugin,
 	PluginSettingTab,
@@ -16,7 +18,8 @@ interface ImgurPluginSettings {
 	bucket: string;
 	region: string;
 	prefix: string;
-	expiration: number; // 新增字段：有效期（秒）
+	expiration: number;
+	backupPath: string;
 }
 
 const DEFAULT_SETTINGS: ImgurPluginSettings = {
@@ -25,26 +28,24 @@ const DEFAULT_SETTINGS: ImgurPluginSettings = {
 	bucket: "",
 	region: "",
 	prefix: "",
-	expiration: 12 * 30 * 24 * 60 * 60, // 默认1年（以秒为单位）
+	expiration: 12 * 30 * 24 * 60 * 60,
+	backupPath: "",
 };
 
 export default class ImgurPlugin extends Plugin {
 	settings: ImgurPluginSettings;
-	private uploader: COSUploader;
+	public uploader: COSUploader;
 
 	async onload() {
 		await this.loadSettings();
 
-		// 添加一个标记来记录是否已经初始化过
 		let isFirstInitialization =
 			!this.settings.secretId ||
 			!this.settings.secretKey ||
 			!this.settings.bucket ||
 			!this.settings.region;
 
-		// 初始化上传器的函数
 		const initUploader = () => {
-			// 检查所有必要的配置是否都已设置
 			if (
 				this.settings.secretId &&
 				this.settings.secretKey &&
@@ -53,7 +54,6 @@ export default class ImgurPlugin extends Plugin {
 			) {
 				try {
 					this.uploader = new COSUploader(this.settings);
-					// 只在首次配置时显示通知
 					if (isFirstInitialization) {
 						new Notice("腾讯云 COS 配置已完成！");
 						isFirstInitialization = false;
@@ -65,7 +65,6 @@ export default class ImgurPlugin extends Plugin {
 			}
 		};
 
-		// 初始检查
 		if (
 			!this.settings.secretId ||
 			!this.settings.secretKey ||
@@ -77,14 +76,16 @@ export default class ImgurPlugin extends Plugin {
 			initUploader();
 		}
 
-		// 拖拽图片上传处理
+		// 注册图片大小调整功能
+		this.registerImageResizer();
+
 		this.registerEvent(
 			this.app.workspace.on(
 				"editor-drop",
 				async (
 					evt: DragEvent,
 					editor: Editor,
-					markdownView: MarkdownView
+					markdownView: MarkdownView,
 				) => {
 					evt.preventDefault();
 					evt.stopPropagation();
@@ -99,53 +100,46 @@ export default class ImgurPlugin extends Plugin {
 						const file = files[i];
 
 						try {
-							// 获取当前文件
 							const activeFile = markdownView.file;
 							if (!activeFile) {
 								new Notice("未找到当前文件");
 								continue;
 							}
 
-							// 上传到腾讯云
 							const url = await this.uploader.uploadFile(file);
 
-							// 插入新的远程图片链接
 							const pos = editor.getCursor();
 							editor.replaceRange(`![${file.name}](${url})`, pos);
 
-							// 等待一小段时间确保本地图片已创建
 							await new Promise((resolve) =>
-								setTimeout(resolve, 100)
+								setTimeout(resolve, 100),
 							);
 
-							// 获取当前文件内容并查找本地图片
-							const content = await this.app.vault.read(
-								activeFile
-							);
-							const imageRegex = /!\[\[(.*?)\]\]/g;
+							const content =
+								await this.app.vault.read(activeFile);
+							const imageRegex =
+								/!(?:\[\[([^\]]+)\]\]|\[.*?\]\(([^)]+)\))/g;
 							const matches = [...content.matchAll(imageRegex)];
 
-							// 删除最近创建的本地图片
 							for (const match of matches) {
-								const imagePath = match[1];
+								const imagePath = match[1] || match[2];
 								const imageFile = this.findImageFile(
 									imagePath,
-									activeFile
+									activeFile,
 								);
 
 								if (imageFile instanceof TFile) {
 									await this.app.fileManager.trashFile(
-										imageFile
+										imageFile,
 									);
 
-									// 替换文件内容中的本地图片链接
 									const newContent = content.replace(
 										`![[${imagePath}]]`,
-										""
+										"",
 									);
 									await this.app.vault.modify(
 										activeFile,
-										newContent
+										newContent,
 									);
 								}
 							}
@@ -156,17 +150,17 @@ export default class ImgurPlugin extends Plugin {
 							console.error("Upload error:", error);
 						}
 					}
-				}
-			)
+				},
+			),
 		);
-		// 复制粘贴图片上传
+
 		this.registerEvent(
 			this.app.workspace.on(
 				"editor-paste",
 				async (
 					evt: ClipboardEvent,
 					editor: Editor,
-					markdownView: MarkdownView
+					markdownView: MarkdownView,
 				) => {
 					const files = evt.clipboardData?.files;
 
@@ -177,57 +171,51 @@ export default class ImgurPlugin extends Plugin {
 						evt.preventDefault();
 
 						try {
-							// 获取当前文件
 							const activeFile = markdownView.file;
 							if (!activeFile) {
 								new Notice("未找到当前文件");
 								continue;
 							}
 
-							// 上传到腾讯云
 							const url = await this.uploader.uploadFile(file);
 
-							// 插入新的远程图片链接
 							const pos = editor.getCursor();
 							editor.replaceRange(`![${file.name}](${url})`, pos);
 
-							// 等待一小段时间确保本地图片已创建
 							await new Promise((resolve) =>
-								setTimeout(resolve, 100)
+								setTimeout(resolve, 100),
 							);
 
-							// 获取当前文件内容并查找本地图片
 							await this.app.vault.process(
 								activeFile,
 								(content) => {
-									const imageRegex = /!\[\[(.*?)\]\]/g;
+									const imageRegex =
+										/!(?:\[\[([^\]]+)\]\]|\[.*?\]\(([^)]+)\))/g;
 									const matches = [
 										...content.matchAll(imageRegex),
 									];
 
-									// 删除最近创建的本地图片
 									for (const match of matches) {
-										const imagePath = match[1];
+										const imagePath = match[1] || match[2];
 										const imageFile = this.findImageFile(
 											imagePath,
-											activeFile
+											activeFile,
 										);
 
 										if (imageFile instanceof TFile) {
 											this.app.fileManager.trashFile(
-												imageFile
+												imageFile,
 											);
 
-											// 替换文件内容中的本地图片链接
 											content = content.replace(
 												`![[${imagePath}]]`,
-												""
+												"",
 											);
 										}
 									}
 
 									return content;
-								}
+								},
 							);
 
 							new Notice("图片上传成功！");
@@ -236,13 +224,12 @@ export default class ImgurPlugin extends Plugin {
 							console.error("Upload error:", error);
 						}
 					}
-				}
-			)
+				},
+			),
 		);
-		// 笔记右键菜单上传处理
+
 		this.registerEvent(
 			this.app.workspace.on("file-menu", (menu, file: TFile) => {
-				// 只对 Markdown 文件显示菜单
 				if (file.extension !== "md") return;
 
 				menu.addItem((item) => {
@@ -252,8 +239,8 @@ export default class ImgurPlugin extends Plugin {
 							try {
 								const content = await this.app.vault.read(file);
 
-								// 匹配 Obsidian 格式的图片链接
-								const imageRegex = /!\[\[([^\]]+)\]\]/g;
+								const imageRegex =
+									/!(?:\[\[([^\]]+)\]\]|\[.*?\]\(([^)]+)\))/g;
 								const matches = [
 									...content.matchAll(imageRegex),
 								];
@@ -263,25 +250,123 @@ export default class ImgurPlugin extends Plugin {
 									return;
 								}
 
+								// 先创建备份文件夹和笔记子文件夹
+								// 如果设置了自定义备份路径，使用自定义路径；否则使用默认路径
+								let backupFolderPath: string;
+								if (this.settings.backupPath) {
+									// 确保自定义路径格式正确
+									backupFolderPath =
+										this.settings.backupPath.startsWith("/")
+											? this.settings.backupPath.substring(
+													1,
+												)
+											: this.settings.backupPath;
+								} else {
+									backupFolderPath = `${file.parent?.path || ""}/备份`;
+								}
+
+								let backupFolder =
+									this.app.vault.getAbstractFileByPath(
+										backupFolderPath,
+									);
+								if (!backupFolder) {
+									try {
+										backupFolder =
+											await this.app.vault.createFolder(
+												backupFolderPath,
+											);
+									} catch (error) {
+										new Notice(
+											`创建备份文件夹失败: ${error.message}`,
+										);
+										return;
+									}
+								}
+
+								const noteBackupFolderPath = `${backupFolderPath}/${file.basename}`;
+								let noteBackupFolder =
+									this.app.vault.getAbstractFileByPath(
+										noteBackupFolderPath,
+									);
+								if (!noteBackupFolder) {
+									try {
+										noteBackupFolder =
+											await this.app.vault.createFolder(
+												noteBackupFolderPath,
+											);
+									} catch (error) {
+										new Notice(
+											`创建笔记备份文件夹失败: ${error.message}`,
+										);
+										return;
+									}
+								}
+
+								// 备份原始笔记内容（只备份一次）
+								const timestamp = new Date()
+									.toISOString()
+									.replace(/[:.]/g, "-");
+								const backupFileName = `${file.basename}-backup-${timestamp}.md`;
+								const backupFilePath = `${noteBackupFolderPath}/${backupFileName}`;
+
+								// 检查备份文件是否已存在
+								const existingBackup =
+									this.app.vault.getAbstractFileByPath(
+										backupFilePath,
+									);
+								if (!existingBackup) {
+									await this.app.vault.create(
+										backupFilePath,
+										content,
+									);
+									new Notice(`已备份笔记: ${backupFileName}`);
+								}
+
 								let newContent = content;
 								for (const match of matches) {
-									const imagePath = match[1];
+									const imagePath = match[1] || match[2];
 
-									// 获取图片文件
 									const imageFile = this.findImageFile(
 										imagePath,
-										file
+										file,
 									);
 
 									if (!imageFile) {
-										console.log(`未找到图片: ${imagePath}`);
 										continue;
 									}
 
 									try {
+										// 备份原始本地图片（使用原始名称）
+										const imageBackupPath = `${noteBackupFolderPath}/${imageFile.name}`;
+
+										// 检查图片备份是否已存在
+										const existingImageBackup =
+											this.app.vault.getAbstractFileByPath(
+												imageBackupPath,
+											);
+										if (!existingImageBackup) {
+											try {
+												const imageData =
+													await this.app.vault.readBinary(
+														imageFile,
+													);
+												await this.app.vault.createBinary(
+													imageBackupPath,
+													imageData,
+												);
+												new Notice(
+													`已备份图片: ${imageFile.name}`,
+												);
+											} catch (imageBackupError) {
+												new Notice(
+													`备份图片 ${imageFile.name} 失败: ${imageBackupError.message}`,
+												);
+											}
+										}
+
 										const imageArrayBuffer =
 											await this.app.vault.readBinary(
-												imageFile
+												imageFile,
 											);
 										const imageBlob = new Blob([
 											imageArrayBuffer,
@@ -291,40 +376,48 @@ export default class ImgurPlugin extends Plugin {
 											imageFile.name.replace(/\s/g, ""),
 											{
 												type: "image/png",
-											}
+											},
 										);
 
 										const url =
 											await this.uploader.uploadFile(
-												imageToUpload
+												imageToUpload,
 											);
 
-										// 替换当前图片链接
-										newContent = newContent.replace(
-											`![[${imagePath}]]`,
-											`![${imageFile.name}](${url})`
-										);
+										if (
+											newContent.includes(
+												`![[${imagePath}]]`,
+											)
+										) {
+											newContent = newContent.replace(
+												`![[${imagePath}]]`,
+												`![${imageFile.name}](${url})`,
+											);
+										} else {
+											const pattern = `](${imagePath})`;
+											newContent = newContent
+												.split(pattern)
+												.join(`](${url})`);
+										}
 
-										// 删除本地图片文件
 										await this.app.fileManager.trashFile(
-											imageFile
+											imageFile,
 										);
 										new Notice(
-											`图片 ${imageFile.name} 上传成功`
+											`图片 ${imageFile.name} 上传成功`,
 										);
 									} catch (error) {
 										new Notice(
-											`图片 ${imagePath} 上传失败: ${error.message}`
+											`图片 ${imagePath} 上传失败: ${error.message}`,
 										);
 										console.error("Upload error:", error);
 									}
 								}
 
-								// 一次性更新文件内容
 								if (newContent !== content) {
 									await this.app.vault.modify(
 										file,
-										newContent
+										newContent,
 									);
 									new Notice("所有图片链接已更新");
 								}
@@ -342,7 +435,6 @@ export default class ImgurPlugin extends Plugin {
 							try {
 								const content = await this.app.vault.read(file);
 
-								// 匹配 Obsidian 格式的图片链接
 								const imageRegex = /!\[.*?\]\((.*?)\)/g;
 								const matches = [
 									...content.matchAll(imageRegex),
@@ -358,42 +450,38 @@ export default class ImgurPlugin extends Plugin {
 									const imageUrl = match[1];
 
 									try {
-										// 提取文件路径
 										const urlPath = new URL(imageUrl)
 											.pathname;
 										const fileName = decodeURIComponent(
 											urlPath.substring(
-												urlPath.lastIndexOf("/") + 1
-											)
+												urlPath.lastIndexOf("/") + 1,
+											),
 										);
 
-										// 刷新图片有效期
 										const refreshedUrl =
 											await this.uploader.refreshSignedUrl(
-												fileName
+												fileName,
 											);
 
-										// 替换当前图片链接
 										newContent = newContent.replace(
 											imageUrl,
-											refreshedUrl
+											refreshedUrl,
 										);
 										new Notice(
-											`图片 ${fileName} 有效期已刷新`
+											`图片 ${fileName} 有效期已刷新`,
 										);
 									} catch (error) {
 										new Notice(
-											`刷新图片 ${imageUrl} 失败: ${error.message}`
+											`刷新图片 ${imageUrl} 失败: ${error.message}`,
 										);
 										console.error("Refresh error:", error);
 									}
 								}
 
-								// 一次性更新文件内容
 								if (newContent !== content) {
 									await this.app.vault.modify(
 										file,
-										newContent
+										newContent,
 									);
 									new Notice("所有图片链接有效期已刷新");
 								}
@@ -403,13 +491,24 @@ export default class ImgurPlugin extends Plugin {
 							}
 						});
 				});
-			})
+			}),
 		);
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
+		// 添加图片管理命令
+		this.addCommand({
+			id: "manage-cos-images",
+			name: "管理COS图片",
+			callback: () => {
+				if (!this.uploader) {
+					new Notice("请先配置COS设置");
+					return;
+				}
+				new ImageManagerModal(this.app, this.uploader).open();
+			},
+		});
+
 		this.addSettingTab(new ImgurSettingTab(this.app, this, initUploader));
 
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
 		this.registerInterval(window.setInterval(() => {}, 5 * 60 * 1000));
 	}
 
@@ -424,7 +523,7 @@ export default class ImgurPlugin extends Plugin {
 		this.settings = Object.assign(
 			{},
 			DEFAULT_SETTINGS,
-			await this.loadData()
+			await this.loadData(),
 		);
 	}
 
@@ -432,8 +531,10 @@ export default class ImgurPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
-	// 添加新的辅助方法来查找图片文件
 	private findImageFile(imagePath: string, currentFile: TFile): TFile | null {
+		// 移除可能的路径前缀
+		const cleanPath = imagePath.split("/").pop() || imagePath;
+
 		// 1. 尝试直接获取（绝对路径）
 		let imageFile = this.app.vault.getAbstractFileByPath(imagePath);
 		if (imageFile instanceof TFile && this.isImageFile(imageFile)) {
@@ -455,23 +556,331 @@ export default class ImgurPlugin extends Plugin {
 			return imageFile;
 		}
 
-		// 4. 递归搜索整个vault
+		// 4. 递归搜索整个vault，使用清理后的文件名
 		const files = this.app.vault.getFiles();
+		const foundFile = files.find(
+			(file) => file.name === cleanPath && this.isImageFile(file),
+		);
+		if (foundFile) {
+			return foundFile;
+		}
+
+		// 5. 如果还是找不到，尝试模糊匹配（处理可能的路径问题）
 		return (
 			files.find(
-				(file) => file.name === imagePath && this.isImageFile(file)
+				(file) => file.name === imagePath && this.isImageFile(file),
 			) || null
 		);
 	}
 
-	// 添加辅助方法来检查文件是否为图片
 	private isImageFile(file: TFile): boolean {
 		return (
 			file.extension.toLowerCase().match(/png|jpg|jpeg|gif|svg|webp/i) !==
 			null
 		);
 	}
+
+	//#region 注册图片大小调整功能
+
+	// 注册图片大小调整功能
+	private registerImageResizer() {
+		// 监听预览模式中的图片
+		this.registerDomEvent(document, "mousedown", (evt: MouseEvent) => {
+			const target = evt.target as HTMLElement;
+			if (target.tagName === "IMG") {
+				const previewView = target.closest(".markdown-preview-view");
+				const editView = target.closest(".markdown-source-view");
+
+				if (previewView || editView) {
+					this.handleImageResize(evt, target as HTMLImageElement);
+				}
+			}
+		});
+
+		// 监听编辑器内容变化，为新插入的图片添加大小调整功能
+		this.registerEvent(
+			this.app.workspace.on("active-leaf-change", () => {
+				this.addImageResizeHandlers();
+			}),
+		);
+
+		// 初始化当前活动编辑器的图片处理
+		this.addImageResizeHandlers();
+	}
+
+	// 为编辑器中的图片添加大小调整处理
+	private addImageResizeHandlers() {
+		const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+		if (!activeView) return;
+
+		// 为预览模式和编辑模式都添加处理
+		setTimeout(() => {
+			const container = activeView.containerEl;
+			const images = container.querySelectorAll("img");
+
+			images.forEach((img) => {
+				// 避免重复添加事件监听器
+				if (!img.hasAttribute("data-resize-enabled")) {
+					img.setAttribute("data-resize-enabled", "true");
+					img.style.cursor = "ew-resize";
+
+					img.addEventListener("mousedown", (evt: MouseEvent) => {
+						evt.preventDefault();
+						this.handleImageResize(evt, img);
+					});
+				}
+			});
+		}, 100);
+	}
+
+	// 处理图片大小调整
+	private handleImageResize(evt: MouseEvent, img: HTMLImageElement) {
+		evt.preventDefault();
+		evt.stopPropagation();
+
+		const startX = evt.clientX;
+		const startWidth = img.offsetWidth;
+		let isDragging = false;
+
+		const onMouseMove = (e: MouseEvent) => {
+			if (!isDragging && Math.abs(e.clientX - startX) > 5) {
+				isDragging = true;
+				img.style.cursor = "ew-resize";
+				document.body.style.cursor = "ew-resize";
+			}
+
+			if (isDragging) {
+				const deltaX = e.clientX - startX;
+				const newWidth = Math.max(50, startWidth + deltaX);
+				img.style.width = newWidth + "px";
+				img.style.height = "auto";
+
+				// 实时显示大小提示
+				this.showResizeTooltip(
+					e.clientX,
+					e.clientY,
+					Math.round(newWidth),
+				);
+			}
+		};
+
+		const onMouseUp = async () => {
+			document.body.style.cursor = "";
+			this.hideResizeTooltip();
+
+			if (isDragging) {
+				img.style.cursor = "ew-resize";
+				await this.updateImageSizeInMarkdown(img);
+			}
+
+			document.removeEventListener("mousemove", onMouseMove);
+			document.removeEventListener("mouseup", onMouseUp);
+		};
+
+		document.addEventListener("mousemove", onMouseMove);
+		document.addEventListener("mouseup", onMouseUp);
+	}
+
+	// 显示调整大小的提示
+	private showResizeTooltip(x: number, y: number, width: number) {
+		let tooltip = document.getElementById("image-resize-tooltip");
+		if (!tooltip) {
+			tooltip = document.createElement("div");
+			tooltip.id = "image-resize-tooltip";
+			tooltip.style.cssText = `
+				position: fixed;
+				background: var(--background-primary);
+				border: 1px solid var(--background-modifier-border);
+				border-radius: 4px;
+				padding: 4px 8px;
+				font-size: 12px;
+				z-index: 10000;
+				pointer-events: none;
+				box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+			`;
+			document.body.appendChild(tooltip);
+		}
+
+		tooltip.textContent = `${width}px`;
+		tooltip.style.left = x + 10 + "px";
+		tooltip.style.top = y - 30 + "px";
+		tooltip.style.display = "block";
+	}
+
+	// 隐藏调整大小的提示
+	private hideResizeTooltip() {
+		const tooltip = document.getElementById("image-resize-tooltip");
+		if (tooltip) {
+			tooltip.style.display = "none";
+		}
+	}
+
+	// 更新 Markdown 中的图片大小
+	private async updateImageSizeInMarkdown(img: HTMLImageElement) {
+		const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+		if (!activeView) return;
+
+		const editor = activeView.editor;
+		const content = editor.getValue();
+		const imgSrc = img.src;
+		const newWidth = Math.round(img.offsetWidth);
+
+		// 提取图片的关键信息用于匹配
+		const imgInfo = this.extractImageInfo(imgSrc);
+		if (!imgInfo) {
+			new Notice("无法识别图片信息");
+			return;
+		}
+
+		let newContent = content;
+		let updated = false;
+
+		// 匹配各种可能的 Markdown 图片语法
+		const patterns = [
+			// 标准语法：![alt](url) 或 ![alt*width](url)
+			{ regex: /!\[([^\]]*?)(?:\*\d+)?\]\(([^)]+)\)/g, type: "markdown" },
+			// Wiki 链接：![[filename]] 或 ![[filename|width]]
+			{ regex: /!\[\[([^\]]+?)(?:\|\d+)?\]\]/g, type: "wiki" },
+			// HTML img 标签
+			{ regex: /<img[^>]+src=["']([^"']+)["'][^>]*>/g, type: "html" },
+		];
+
+		for (const pattern of patterns) {
+			pattern.regex.lastIndex = 0; // 重置正则表达式
+			let match;
+
+			while ((match = pattern.regex.exec(content)) !== null) {
+				const fullMatch = match[0];
+
+				// 检查是否匹配当前图片
+				if (this.isMatchingImage(match, imgInfo, pattern.type)) {
+					let replacement;
+
+					if (pattern.type === "markdown") {
+						// 标准 Markdown 语法
+						const altText = match[1] || "";
+						const url = match[2];
+						replacement = `![${altText}*${newWidth}](${url})`;
+					} else if (pattern.type === "wiki") {
+						// Wiki 链接语法
+						const filename = match[1];
+						const baseFilename = filename.split("|")[0];
+						replacement = `![[${baseFilename}|${newWidth}]]`;
+					} else if (pattern.type === "html") {
+						// HTML 语法 - 更新 width 属性
+						replacement = fullMatch.replace(
+							/width=["']\d+["']/g,
+							`width="${newWidth}"`,
+						);
+						if (!replacement.includes("width=")) {
+							replacement = replacement.replace(
+								/<img/,
+								`<img width="${newWidth}"`,
+							);
+						}
+					}
+
+					if (replacement && replacement !== fullMatch) {
+						newContent = newContent.replace(fullMatch, replacement);
+						updated = true;
+						break; // 找到第一个匹配就停止
+					}
+				}
+			}
+
+			if (updated) break; // 如果已经更新，不需要继续其他模式
+		}
+
+		if (updated) {
+			editor.setValue(newContent);
+			new Notice(`图片大小已调整为 ${newWidth}px`);
+		} else {
+			new Notice("未能更新图片大小到 Markdown 源码");
+		}
+	}
+
+	// 提取图片信息用于匹配
+	private extractImageInfo(
+		imgSrc: string,
+	): { filename: string; domain: string; path: string } | null {
+		try {
+			const url = new URL(imgSrc);
+			const pathname = url.pathname;
+			const filename = pathname.split("/").pop() || "";
+
+			return {
+				filename: filename.split("?")[0], // 去掉查询参数
+				domain: url.hostname,
+				path: pathname,
+			};
+		} catch (e) {
+			// 如果不是完整 URL，尝试提取文件名
+			const filename = imgSrc.split("/").pop()?.split("?")[0] || "";
+			return filename ? { filename, domain: "", path: imgSrc } : null;
+		}
+	}
+
+	// 检查图片匹配
+	private isMatchingImage(
+		match: RegExpExecArray,
+		imgInfo: { filename: string; domain: string; path: string },
+		type: string,
+	): boolean {
+		let url = "";
+
+		if (type === "markdown") {
+			url = match[2]; // URL 在第二个捕获组
+		} else if (type === "wiki") {
+			url = match[1]; // 文件名在第一个捕获组
+		} else if (type === "html") {
+			// 从 HTML 标签中提取 src
+			const srcMatch = match[0].match(/src=["']([^"']+)["']/);
+			url = srcMatch ? srcMatch[1] : "";
+		}
+
+		if (!url) return false;
+
+		// 检查文件名匹配
+		if (imgInfo.filename && url.includes(imgInfo.filename)) {
+			return true;
+		}
+
+		// 检查域名匹配
+		if (imgInfo.domain && url.includes(imgInfo.domain)) {
+			return true;
+		}
+
+		// 检查路径匹配
+		if (
+			imgInfo.path &&
+			(url.includes(imgInfo.path) || imgInfo.path.includes(url))
+		) {
+			return true;
+		}
+
+		// 模糊匹配：检查 URL 的关键部分
+		try {
+			const urlObj = new URL(url);
+			const urlFilename =
+				urlObj.pathname.split("/").pop()?.split("?")[0] || "";
+			if (urlFilename === imgInfo.filename) {
+				return true;
+			}
+		} catch (e) {
+			// 如果不是完整 URL，进行简单的字符串匹配
+			if (
+				url.includes(imgInfo.filename) ||
+				imgInfo.filename.includes(url)
+			) {
+				return true;
+			}
+		}
+
+		return false;
+	}
 }
+
+//#endregion
 
 class ImgurSettingTab extends PluginSettingTab {
 	plugin: ImgurPlugin;
@@ -487,10 +896,9 @@ class ImgurSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
-		// 创建一个防抖函数来延迟初始化
 		const debouncedInit = this.debounce(() => {
 			this.initUploader();
-		}, 2000); // 2秒延迟
+		}, 2000);
 
 		new Setting(containerEl)
 			.setName("Secret Id")
@@ -503,7 +911,7 @@ class ImgurSettingTab extends PluginSettingTab {
 						this.plugin.settings.secretId = value.trim();
 						await this.plugin.saveSettings();
 						debouncedInit();
-					})
+					}),
 			);
 
 		new Setting(containerEl)
@@ -517,7 +925,7 @@ class ImgurSettingTab extends PluginSettingTab {
 						this.plugin.settings.secretKey = value.trim();
 						await this.plugin.saveSettings();
 						debouncedInit();
-					})
+					}),
 			);
 
 		new Setting(containerEl)
@@ -531,7 +939,7 @@ class ImgurSettingTab extends PluginSettingTab {
 						this.plugin.settings.bucket = value.trim();
 						await this.plugin.saveSettings();
 						debouncedInit();
-					})
+					}),
 			);
 
 		new Setting(containerEl)
@@ -561,13 +969,102 @@ class ImgurSettingTab extends PluginSettingTab {
 					.setPlaceholder("例如：images")
 					.setValue(this.plugin.settings.prefix)
 					.onChange(async (value) => {
-						// 确保前缀格式正确（去除首尾斜杠）
 						let prefix = value.trim();
 						prefix = prefix.replace(/^\/+|\/+$/g, "");
 						this.plugin.settings.prefix = prefix;
 						await this.plugin.saveSettings();
-					})
+					}),
 			);
+
+		new Setting(containerEl)
+			.setName("备份路径")
+			.setDesc(
+				"设置备份文件的存储路径，默认为空则备份到当前笔记同级目录的备份文件夹",
+			)
+			.addText((text) => {
+				// 获取所有文件夹
+				const allFiles = this.app.vault.getAllLoadedFiles();
+				const folders: string[] = [];
+
+				allFiles.forEach((file) => {
+					const fileWithChildren = file as {
+						children?: unknown;
+						path: string;
+					};
+					if (fileWithChildren.children !== undefined) {
+						folders.push(fileWithChildren.path);
+					}
+				});
+
+				folders.sort();
+
+				text.setPlaceholder("留空则使用默认路径")
+					.setValue(this.plugin.settings.backupPath)
+					.onChange(async (value) => {
+						this.plugin.settings.backupPath = value;
+						await this.plugin.saveSettings();
+					});
+
+				// 聚焦时显示文件夹列表
+				const inputEl = text.inputEl;
+				let suggestionsList: HTMLElement | null = null;
+
+				inputEl.addEventListener("focus", () => {
+					// 创建建议列表容器
+					if (!suggestionsList) {
+						suggestionsList = document.createElement("div");
+						suggestionsList.className = "backup-path-suggestions";
+						suggestionsList.style.cssText =
+							"position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: 8px; max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1); padding: 4px;";
+						inputEl.parentElement?.style.setProperty(
+							"position",
+							"relative",
+						);
+						inputEl.parentElement?.appendChild(suggestionsList);
+					}
+
+					suggestionsList.innerHTML = "";
+					folders.forEach((folder) => {
+						const item = document.createElement("div");
+						item.className = "suggestion-item";
+						item.style.cssText =
+							"padding: 8px 12px; cursor: pointer; transition: background-color 0.15s ease; font-size: 13px; color: var(--text-normal); border-radius: 4px; margin: 2px 0; text-align: left; line-height: 1.4;";
+						item.textContent = folder || "/";
+						item.addEventListener("click", () => {
+							text.setValue(folder);
+							this.plugin.settings.backupPath = folder;
+							this.plugin.saveSettings();
+							if (suggestionsList) {
+								suggestionsList.style.display = "none";
+							}
+						});
+						item.addEventListener("mouseenter", () => {
+							item.style.backgroundColor =
+								"var(--background-modifier-hover)";
+						});
+						item.addEventListener("mouseleave", () => {
+							item.style.backgroundColor = "transparent";
+						});
+						if (suggestionsList) {
+							suggestionsList.appendChild(item);
+						}
+					});
+
+					if (suggestionsList) {
+						suggestionsList.style.display = "block";
+					}
+				});
+
+				inputEl.addEventListener("blur", () => {
+					if (suggestionsList) {
+						setTimeout(() => {
+							if (suggestionsList) {
+								suggestionsList.style.display = "none";
+							}
+						}, 200);
+					}
+				});
+			});
 
 		new Setting(containerEl)
 			.setName("图片有效期")
@@ -579,6 +1076,9 @@ class ImgurSettingTab extends PluginSettingTab {
 					.addOption((12 * 30 * 24 * 60 * 60).toString(), "1年")
 					.addOption((36 * 30 * 24 * 60 * 60).toString(), "3年")
 					.addOption((60 * 30 * 24 * 60 * 60).toString(), "5年")
+					.addOption((20 * 365 * 24 * 60 * 60).toString(), "20年")
+					.addOption((50 * 365 * 24 * 60 * 60).toString(), "50年")
+					.addOption((100 * 365 * 24 * 60 * 60).toString(), "永久")
 					.setValue(this.plugin.settings.expiration.toString())
 					.onChange(async (value) => {
 						const expiration = parseInt(value, 10);
@@ -590,9 +1090,28 @@ class ImgurSettingTab extends PluginSettingTab {
 						}
 					});
 			});
+
+		// 添加图片管理按钮
+		new Setting(containerEl)
+			.setName("图片管理")
+			.setDesc("查看和管理已上传到COS的图片")
+			.addButton((button) => {
+				button
+					.setButtonText("打开图片管理")
+					.setCta()
+					.onClick(() => {
+						if (!this.plugin.uploader) {
+							new Notice("请先配置COS设置");
+							return;
+						}
+						new ImageManagerModal(
+							this.app,
+							this.plugin.uploader,
+						).open();
+					});
+			});
 	}
 
-	// 添加防抖函数
 	private debounce(func: (...args: unknown[]) => void, wait: number) {
 		let timeout: NodeJS.Timeout;
 		return function executedFunction(...args: unknown[]) {
@@ -607,7 +1126,7 @@ class ImgurSettingTab extends PluginSettingTab {
 }
 
 class COSUploader {
-	private cos: COS; // Specify the type for the COS instance
+	private cos: COS;
 	private settings: ImgurPluginSettings;
 	private urlCache: Map<string, string>;
 	private updateInterval: NodeJS.Timeout | null = null;
@@ -627,7 +1146,6 @@ class COSUploader {
 		});
 	}
 
-	// 在插件卸载时清理定时器
 	public cleanup() {
 		if (this.updateInterval) {
 			clearInterval(this.updateInterval);
@@ -640,17 +1158,15 @@ class COSUploader {
 			throw new Error("请先配置存储桶和地域信息");
 		}
 
-		// 修改文件名：将空格替换为短横线，并保持原始扩展名
 		const originalName = file.name;
 		const extension = originalName.split(".").pop();
 		const nameWithoutExt = originalName.substring(
 			0,
-			originalName.lastIndexOf(".")
+			originalName.lastIndexOf("."),
 		);
 		const processedName = nameWithoutExt.replace(/\s+/g, "-");
 		const fileName = `${Date.now()}-${processedName}.${extension}`;
 
-		// 构建完整的文件路径
 		const prefix = this.settings.prefix ? `${this.settings.prefix}/` : "";
 		const fullPath = `${prefix}${fileName}`;
 
@@ -670,14 +1186,13 @@ class COSUploader {
 					}
 
 					try {
-						// 生成带签名的临时访问URL，有效期为配置的有效期
 						const url = await this.getSignedUrl(fullPath);
 						this.urlCache.set(fullPath, url);
 						resolve(url);
 					} catch (error) {
 						reject(error);
 					}
-				}
+				},
 			);
 		});
 	}
@@ -685,9 +1200,9 @@ class COSUploader {
 	private getSignedUrl(
 		fileName: string,
 		prefix?: string,
-		expires?: number
+		expires?: number,
 	): Promise<string> {
-		const expiration = expires || this.settings.expiration; // 使用配置的有效期
+		const expiration = expires || this.settings.expiration;
 		return new Promise((resolve, reject) => {
 			this.cos.getObjectUrl(
 				{
@@ -705,15 +1220,494 @@ class COSUploader {
 					resolve(
 						data.Url +
 							(data.Url.indexOf("?") > -1 ? "&" : "?") +
-							"response-content-disposition=inline"
+							"response-content-disposition=inline",
 					);
-				}
+				},
 			);
 		});
 	}
 
-	// 新增方法：刷新图片有效期
 	async refreshSignedUrl(fileName: string): Promise<string> {
-		return this.getSignedUrl(fileName, this.settings.prefix + "/"); // 使用配置的有效期
+		return this.getSignedUrl(fileName, this.settings.prefix + "/");
 	}
+
+	//#region COS 图片管理
+
+	// 列出存储桶中的图片
+	async listImages(marker?: string): Promise<{
+		images: Array<{
+			key: string;
+			size: number;
+			lastModified: string;
+			url: string;
+		}>;
+		isTruncated: boolean;
+		nextMarker?: string;
+	}> {
+		return new Promise((resolve, reject) => {
+			const prefix = this.settings.prefix
+				? `${this.settings.prefix}/`
+				: "";
+
+			this.cos.getBucket(
+				{
+					Bucket: this.settings.bucket,
+					Region: this.settings.region,
+					Prefix: prefix,
+					Marker: marker || "",
+					MaxKeys: 100,
+				},
+				async (err: COS.CosError | null, data: any) => {
+					if (err) {
+						reject(err);
+						return;
+					}
+
+					try {
+						const images = [];
+						for (const item of data.Contents || []) {
+							// 只处理图片文件
+							if (this.isImageFile(item.Key)) {
+								const url = await this.getSignedUrl(item.Key);
+								images.push({
+									key: item.Key,
+									size: parseInt(item.Size),
+									lastModified: item.LastModified,
+									url: url,
+								});
+							}
+						}
+
+						resolve({
+							images,
+							isTruncated: data.IsTruncated === "true",
+							nextMarker: data.NextMarker,
+						});
+					} catch (error) {
+						reject(error);
+					}
+				},
+			);
+		});
+	}
+
+	// 删除单个图片
+	async deleteImage(key: string): Promise<void> {
+		return new Promise((resolve, reject) => {
+			this.cos.deleteObject(
+				{
+					Bucket: this.settings.bucket,
+					Region: this.settings.region,
+					Key: key,
+				},
+				(err: COS.CosError | null) => {
+					if (err) {
+						reject(err);
+						return;
+					}
+					resolve();
+				},
+			);
+		});
+	}
+
+	// 批量删除图片
+	async deleteMultipleImages(keys: string[]): Promise<{
+		deleted: string[];
+		errors: Array<{ key: string; error: string }>;
+	}> {
+		return new Promise((resolve, reject) => {
+			const objects = keys.map((key) => ({ Key: key }));
+
+			this.cos.deleteMultipleObject(
+				{
+					Bucket: this.settings.bucket,
+					Region: this.settings.region,
+					Objects: objects,
+					Quiet: false,
+				},
+				(err: COS.CosError | null, data: any) => {
+					if (err) {
+						reject(err);
+						return;
+					}
+
+					const deleted = (data.Deleted || []).map(
+						(item: any) => item.Key,
+					);
+					const errors = (data.Error || []).map((item: any) => ({
+						key: item.Key,
+						error: item.Message || item.Code,
+					}));
+
+					resolve({ deleted, errors });
+				},
+			);
+		});
+	}
+
+	// 检查是否为图片文件
+	private isImageFile(key: string): boolean {
+		const extension = key.split(".").pop()?.toLowerCase();
+		return ["png", "jpg", "jpeg", "gif", "svg", "webp", "bmp"].includes(
+			extension || "",
+		);
+	}
+}
+// 图片管理Modal
+class ImageManagerModal extends Modal {
+	private uploader: COSUploader;
+	private images: Array<{
+		key: string;
+		size: number;
+		lastModified: string;
+		url: string;
+		selected?: boolean;
+	}> = [];
+	private selectedImages: Set<string> = new Set();
+	private currentMarker?: string;
+	private hasMore = false;
+	private loading = false;
+
+	constructor(app: App, uploader: COSUploader) {
+		super(app);
+		this.uploader = uploader;
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.empty();
+
+		contentEl.createEl("h2", { text: "COS 图片管理" });
+
+		// 创建工具栏
+		const toolbar = contentEl.createDiv("image-manager-toolbar");
+		toolbar.style.cssText = `
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			margin-bottom: 16px;
+			padding: 8px 0;
+			border-bottom: 1px solid var(--background-modifier-border);
+		`;
+
+		const leftActions = toolbar.createDiv();
+		const rightActions = toolbar.createDiv();
+
+		// 全选/取消全选按钮
+		const selectAllBtn = new ButtonComponent(leftActions);
+		selectAllBtn.setButtonText("全选").onClick(() => {
+			if (this.selectedImages.size === this.images.length) {
+				this.selectedImages.clear();
+				selectAllBtn.setButtonText("全选");
+			} else {
+				this.images.forEach((img) => this.selectedImages.add(img.key));
+				selectAllBtn.setButtonText("取消全选");
+			}
+			this.updateImageList();
+		});
+
+		// 删除选中按钮
+		const deleteBtn = new ButtonComponent(leftActions);
+		deleteBtn.setButtonText("删除选中").onClick(() => {
+			if (this.selectedImages.size === 0) {
+				new Notice("请先选择要删除的图片");
+				return;
+			}
+			this.deleteSelectedImages();
+		});
+
+		// 刷新按钮
+		const refreshBtn = new ButtonComponent(rightActions);
+		refreshBtn.setButtonText("刷新").onClick(() => {
+			this.loadImages(true);
+		});
+
+		// 创建图片列表容器
+		const listContainer = contentEl.createDiv("image-list-container");
+		listContainer.style.cssText = `
+			max-height: 500px;
+			overflow-y: auto;
+			border: 1px solid var(--background-modifier-border);
+			border-radius: 8px;
+		`;
+
+		this.loadImages();
+	}
+
+	private async loadImages(reset = false) {
+		if (this.loading) return;
+
+		this.loading = true;
+
+		try {
+			if (reset) {
+				this.images = [];
+				this.currentMarker = undefined;
+				this.selectedImages.clear();
+			}
+
+			const result = await this.uploader.listImages(this.currentMarker);
+
+			if (reset) {
+				this.images = result.images;
+			} else {
+				this.images.push(...result.images);
+			}
+
+			this.hasMore = result.isTruncated;
+			this.currentMarker = result.nextMarker;
+
+			this.updateImageList();
+		} catch (error) {
+			new Notice(`加载图片失败: ${error.message}`);
+			console.error("Load images error:", error);
+		} finally {
+			this.loading = false;
+		}
+	}
+
+	private updateImageList() {
+		const container = this.contentEl.querySelector(".image-list-container");
+		if (!container) return;
+
+		container.empty();
+
+		if (this.images.length === 0) {
+			const emptyDiv = container.createDiv();
+			emptyDiv.style.cssText = `
+				text-align: center;
+				padding: 40px;
+				color: var(--text-muted);
+			`;
+			emptyDiv.textContent = "暂无图片";
+			return;
+		}
+
+		// 创建图片网格
+		const grid = container.createDiv("image-grid");
+		grid.style.cssText = `
+			display: grid;
+			grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+			gap: 16px;
+			padding: 16px;
+		`;
+
+		this.images.forEach((image) => {
+			const item = grid.createDiv("image-item");
+			item.style.cssText = `
+				border: 1px solid var(--background-modifier-border);
+				border-radius: 8px;
+				overflow: hidden;
+				transition: all 0.2s ease;
+				cursor: pointer;
+				${this.selectedImages.has(image.key) ? "border-color: var(--interactive-accent); box-shadow: 0 0 0 2px var(--interactive-accent-hover);" : ""}
+			`;
+
+			// 选择框
+			const checkbox = item.createEl("input", { type: "checkbox" });
+			checkbox.style.cssText = `
+				position: absolute;
+				top: 8px;
+				left: 8px;
+				z-index: 1;
+			`;
+			checkbox.checked = this.selectedImages.has(image.key);
+			checkbox.addEventListener("change", () => {
+				if (checkbox.checked) {
+					this.selectedImages.add(image.key);
+				} else {
+					this.selectedImages.delete(image.key);
+				}
+				this.updateImageList();
+			});
+
+			// 图片预览
+			const imgContainer = item.createDiv();
+			imgContainer.style.cssText = `
+				position: relative;
+				height: 150px;
+				background: var(--background-secondary);
+				display: flex;
+				align-items: center;
+				justify-content: center;
+			`;
+
+			const img = imgContainer.createEl("img");
+			img.src = image.url;
+			img.style.cssText = `
+				max-width: 100%;
+				max-height: 100%;
+				object-fit: contain;
+			`;
+
+			// 图片信息
+			const info = item.createDiv();
+			info.style.cssText = `
+				padding: 12px;
+				background: var(--background-primary);
+			`;
+
+			const fileName = info.createDiv();
+			fileName.style.cssText = `
+				font-weight: 500;
+				margin-bottom: 4px;
+				word-break: break-all;
+				font-size: 12px;
+			`;
+			fileName.textContent = image.key.split("/").pop() || image.key;
+
+			const details = info.createDiv();
+			details.style.cssText = `
+				font-size: 11px;
+				color: var(--text-muted);
+				display: flex;
+				justify-content: space-between;
+			`;
+
+			const size = details.createSpan();
+			size.textContent = this.formatFileSize(image.size);
+
+			const date = details.createSpan();
+			date.textContent = new Date(
+				image.lastModified,
+			).toLocaleDateString();
+
+			// 点击选择
+			item.addEventListener("click", (e) => {
+				if (e.target === checkbox) return;
+				checkbox.checked = !checkbox.checked;
+				checkbox.dispatchEvent(new Event("change"));
+			});
+		});
+
+		// 加载更多按钮
+		if (this.hasMore) {
+			const loadMoreBtn = container.createDiv();
+			loadMoreBtn.style.cssText = `
+				text-align: center;
+				padding: 16px;
+			`;
+
+			const btn = new ButtonComponent(loadMoreBtn);
+			btn.setButtonText("加载更多").onClick(() => {
+				this.loadImages();
+			});
+		}
+	}
+
+	private async deleteSelectedImages() {
+		if (this.selectedImages.size === 0) return;
+
+		const keys = Array.from(this.selectedImages);
+
+		// 显示确认对话框
+		const confirmed = await this.showDeleteConfirmDialog(keys.length);
+		if (!confirmed) return;
+
+		try {
+			const result = await this.uploader.deleteMultipleImages(keys);
+
+			if (result.deleted.length > 0) {
+				new Notice(`成功删除 ${result.deleted.length} 张图片`);
+
+				// 从列表中移除已删除的图片
+				this.images = this.images.filter(
+					(img) => !result.deleted.includes(img.key),
+				);
+				result.deleted.forEach((key) =>
+					this.selectedImages.delete(key),
+				);
+
+				this.updateImageList();
+			}
+
+			if (result.errors.length > 0) {
+				new Notice(`${result.errors.length} 张图片删除失败`);
+				console.error("Delete errors:", result.errors);
+			}
+		} catch (error) {
+			new Notice(`删除失败: ${error.message}`);
+			console.error("Delete error:", error);
+		}
+	}
+
+	private showDeleteConfirmDialog(count: number): Promise<boolean> {
+		return new Promise((resolve) => {
+			const modal = new DeleteConfirmModal(this.app, count, resolve);
+			modal.open();
+		});
+	}
+
+	private formatFileSize(bytes: number): string {
+		if (bytes === 0) return "0 B";
+		const k = 1024;
+		const sizes = ["B", "KB", "MB", "GB"];
+		const i = Math.floor(Math.log(bytes) / Math.log(k));
+		return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+	}
+
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
+	}
+}
+// 删除确认对话框
+class DeleteConfirmModal extends Modal {
+	private count: number;
+	private resolve: (value: boolean) => void;
+
+	constructor(app: App, count: number, resolve: (value: boolean) => void) {
+		super(app);
+		this.count = count;
+		this.resolve = resolve;
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.empty();
+
+		// 标题
+		contentEl.createEl("h2", { text: "确认删除" });
+
+		// 提示信息
+		const message = contentEl.createDiv("delete-confirm-message");
+
+		const text = message.createSpan();
+		text.textContent = `您确定要删除选中的 ${this.count} 张图片吗？`;
+
+		const subText = message.createDiv("delete-confirm-subtext");
+		subText.textContent = "此操作不可撤销，图片将从COS存储中永久删除。";
+
+		// 按钮容器
+		const buttonContainer = contentEl.createDiv("delete-confirm-buttons");
+
+		// 取消按钮
+		const cancelBtn = new ButtonComponent(buttonContainer);
+		cancelBtn.setButtonText("取消").onClick(() => {
+			this.resolve(false);
+			this.close();
+		});
+
+		// 确认删除按钮
+		const confirmBtn = new ButtonComponent(buttonContainer);
+		confirmBtn
+			.setButtonText("确认删除")
+			.setCta()
+			.onClick(() => {
+				this.resolve(true);
+				this.close();
+			});
+
+		// 添加危险样式类
+		confirmBtn.buttonEl.addClass("delete-confirm-btn");
+	}
+
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
+		// 如果用户直接关闭对话框，默认为取消
+		this.resolve(false);
+	}
+	//#endregion
 }

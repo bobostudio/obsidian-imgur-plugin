@@ -6,3 +6,141 @@ available in the app when your plugin is enabled.
 If your plugin does not need CSS, delete this file.
 
 */
+
+/* 图片管理界面样式 */
+.image-manager-toolbar {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 16px;
+	padding: 8px 0;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.image-manager-toolbar .mod-cta {
+	margin-left: 8px;
+}
+
+.image-list-container {
+	max-height: 500px;
+	overflow-y: auto;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+}
+
+.image-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+	gap: 16px;
+	padding: 16px;
+}
+
+.image-item {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	overflow: hidden;
+	transition: all 0.2s ease;
+	cursor: pointer;
+	position: relative;
+}
+
+.image-item:hover {
+	border-color: var(--interactive-accent);
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.image-item.selected {
+	border-color: var(--interactive-accent);
+	box-shadow: 0 0 0 2px var(--interactive-accent-hover);
+}
+
+.image-item input[type="checkbox"] {
+	position: absolute;
+	top: 8px;
+	left: 8px;
+	z-index: 1;
+	width: 16px;
+	height: 16px;
+}
+
+.image-item .image-preview {
+	position: relative;
+	height: 150px;
+	background: var(--background-secondary);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.image-item .image-preview img {
+	max-width: 100%;
+	max-height: 100%;
+	object-fit: contain;
+}
+
+.image-item .image-info {
+	padding: 12px;
+	background: var(--background-primary);
+}
+
+.image-item .image-filename {
+	font-weight: 500;
+	margin-bottom: 4px;
+	word-break: break-all;
+	font-size: 12px;
+}
+
+.image-item .image-details {
+	font-size: 11px;
+	color: var(--text-muted);
+	display: flex;
+	justify-content: space-between;
+}
+
+.image-empty {
+	text-align: center;
+	padding: 40px;
+	color: var(--text-muted);
+}
+
+.load-more-container {
+	text-align: center;
+	padding: 16px;
+}
+
+/* 删除确认对话框样式 */
+.delete-confirm-message {
+	margin: 20px 0;
+	padding: 16px;
+	background: var(--background-secondary);
+	border-radius: 8px;
+	border-left: 4px solid var(--text-error);
+}
+
+.delete-confirm-warning {
+	color: var(--text-error);
+	font-weight: bold;
+	margin-right: 8px;
+}
+
+.delete-confirm-subtext {
+	margin-top: 8px;
+	font-size: 12px;
+	color: var(--text-muted);
+}
+
+.delete-confirm-buttons {
+	display: flex;
+	justify-content: flex-end;
+	gap: 12px;
+	margin-top: 24px;
+}
+
+.delete-confirm-btn {
+	background-color: var(--text-error) !important;
+	border-color: var(--text-error) !important;
+}
+
+.delete-confirm-btn:hover {
+	opacity: 0.8 !important;
+}
