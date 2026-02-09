@@ -1469,6 +1469,8 @@ export default class ImgurPlugin extends Plugin {
 		const imgSrc = img.src;
 		const newWidth = Math.round(img.offsetWidth);
 
+		console.log("开始更新图片大小:", { imgSrc, newWidth });
+
 		// 提取图片的关键信息用于匹配
 		const imgInfo = this.extractImageInfo(imgSrc);
 		if (!imgInfo) {
@@ -1476,77 +1478,80 @@ export default class ImgurPlugin extends Plugin {
 			return;
 		}
 
+		console.log("提取的图片信息:", imgInfo);
+
 		let newContent = content;
 		let updated = false;
-		let matchedPattern: string | null = null;
 
-		// 匹配各种可能的 Markdown 图片语法
-		const patterns = [
-			// 标准语法：![alt](url) 或 ![alt*width](url)
-			{ regex: /!\[([^\]]*?)(?:\*\d+)?\]\(([^)]+)\)/g, type: "markdown" },
-			// Wiki 链接：![[filename]] 或 ![[filename|width]] 支持各种宽度格式
-			{ regex: /!\[\[([^\]]+?)(?:\|[^\]]+)?\]\]/g, type: "wiki" },
-			// HTML img 标签
-			{ regex: /<img[^>]+src=["']([^"']+)["'][^>]*>/g, type: "html" },
-		];
+		// 专门匹配 Markdown 图片语法：![alt](url) 或 ![alt*width](url)
+		const markdownImageRegex = /!\[([^\]]*?)\]\(([^)]+)\)/g;
+		let match;
 
-		for (const pattern of patterns) {
-			pattern.regex.lastIndex = 0; // 重置正则表达式
-			let match;
+		console.log("开始匹配 Markdown 图片语法");
 
-			while ((match = pattern.regex.exec(content)) !== null) {
+		while ((match = markdownImageRegex.exec(content)) !== null) {
+			const fullMatch = match[0];
+			const altText = match[1];
+			const url = match[2];
+
+			console.log(`找到图片: ${fullMatch}`);
+			console.log(`Alt文本: "${altText}", URL: "${url}"`);
+
+			// 检查是否匹配当前图片
+			if (this.isMatchingImageByUrl(url, imgSrc, imgInfo)) {
+				console.log("图片匹配成功，开始更新宽度");
+
+				// 从alt文本中移除现有的宽度标记
+				const baseAltText = altText.replace(/\*\d+$/, "").trim();
+
+				// 创建新的alt文本，添加宽度标记
+				const newAltText = `${baseAltText}*${newWidth}`;
+				const replacement = `![${newAltText}](${url})`;
+
+				console.log(`替换: ${fullMatch} -> ${replacement}`);
+
+				// 替换内容
+				newContent = newContent.replace(fullMatch, replacement);
+				updated = true;
+				break; // 找到第一个匹配就停止
+			}
+		}
+
+		// 如果没有找到匹配的 Markdown 格式，尝试匹配 Wiki 链接格式
+		if (!updated) {
+			console.log("未找到 Markdown 格式匹配，尝试 Wiki 链接格式");
+			const wikiImageRegex = /!\[\[([^\]]+?)(?:\|[^\]]+)?\]\]/g;
+
+			while ((match = wikiImageRegex.exec(content)) !== null) {
 				const fullMatch = match[0];
+				const filename = match[1];
+				const baseFilename = filename.split("|")[0];
 
-				// 检查是否匹配当前图片
-				if (this.isMatchingImage(match, imgInfo, pattern.type)) {
-					let replacement;
-					matchedPattern = pattern.type;
+				console.log(
+					`找到 Wiki 图片: ${fullMatch}, 文件名: ${baseFilename}`,
+				);
 
-					if (pattern.type === "markdown") {
-						// 标准 Markdown 语法
-						const altText = match[1] || "";
-						const url = match[2];
-						replacement = `![${altText}*${newWidth}](${url})`;
-					} else if (pattern.type === "wiki") {
-						// Wiki 链接语法
-						const filename = match[1];
-						const baseFilename = filename.split("|")[0];
-						replacement = `![[${baseFilename}|${newWidth}]]`;
-					} else if (pattern.type === "html") {
-						// HTML 语法 - 更新 width 属性
-						replacement = fullMatch.replace(
-							/width=["']\d+["']/g,
-							`width="${newWidth}"`,
-						);
-						if (!replacement.includes("width=")) {
-							replacement = replacement.replace(
-								/<img/,
-								`<img width="${newWidth}"`,
-							);
-						}
-					}
+				// 对于 Wiki 链接，通过文件名匹配
+				if (this.isMatchingImageByFilename(baseFilename, imgInfo)) {
+					console.log("Wiki 图片匹配成功，转换为 Markdown 格式");
 
-					if (replacement && replacement !== fullMatch) {
-						newContent = newContent.replace(fullMatch, replacement);
-						updated = true;
-						break; // 找到第一个匹配就停止
-					}
+					// 将 Wiki 格式转换为 Markdown 格式并添加宽度
+					const replacement = `![${baseFilename}*${newWidth}](${imgSrc})`;
+
+					console.log(`替换: ${fullMatch} -> ${replacement}`);
+
+					newContent = newContent.replace(fullMatch, replacement);
+					updated = true;
+					break;
 				}
 			}
-
-			if (updated) break; // 如果已经更新，不需要继续其他模式
 		}
 
 		if (updated) {
 			editor.setValue(newContent);
 			new Notice(`图片大小已调整为 ${newWidth}px`);
-
-			// 如果是wiki链接格式的本地图片，提示用户上传
-			if (matchedPattern === "wiki" && !imgSrc.startsWith("http")) {
-				console.log("检测到本地wiki图片引用，提示用户上传");
-				new Notice("检测到本地图片，建议上传到云端");
-			}
 		} else {
+			console.log("未找到匹配的图片引用");
 			new Notice("未能更新图片大小到 Markdown 源码");
 		}
 	}
@@ -1555,79 +1560,186 @@ export default class ImgurPlugin extends Plugin {
 	private extractImageInfo(
 		imgSrc: string,
 	): { filename: string; domain: string; path: string } | null {
+		console.log("提取图片信息，源URL:", imgSrc);
+
 		try {
 			const url = new URL(imgSrc);
 			const pathname = url.pathname;
 			const filename = pathname.split("/").pop() || "";
 
-			return {
+			const result = {
 				filename: filename.split("?")[0], // 去掉查询参数
 				domain: url.hostname,
-				path: pathname,
+				path: imgSrc, // 保存完整的原始URL用于精确匹配
 			};
+
+			console.log("URL解析结果:", result);
+			return result;
 		} catch (e) {
+			console.log("URL解析失败，尝试提取文件名");
 			// 如果不是完整 URL，尝试提取文件名
 			const filename = imgSrc.split("/").pop()?.split("?")[0] || "";
-			return filename ? { filename, domain: "", path: imgSrc } : null;
+			const result = filename
+				? { filename, domain: "", path: imgSrc }
+				: null;
+			console.log("文件名提取结果:", result);
+			return result;
 		}
 	}
 
 	// 检查图片匹配
-	private isMatchingImage(
-		match: RegExpExecArray,
+	// 通过URL匹配图片
+	private isMatchingImageByUrl(
+		markdownUrl: string,
+		imgSrc: string,
 		imgInfo: { filename: string; domain: string; path: string },
-		type: string,
 	): boolean {
-		let url = "";
+		console.log("URL匹配检查:", { markdownUrl, imgSrc });
 
-		if (type === "markdown") {
-			url = match[2]; // URL 在第二个捕获组
-		} else if (type === "wiki") {
-			url = match[1]; // 文件名在第一个捕获组
-		} else if (type === "html") {
-			// 从 HTML 标签中提取 src
-			const srcMatch = match[0].match(/src=["']([^"']+)["']/);
-			url = srcMatch ? srcMatch[1] : "";
+		// 直接URL比较
+		if (markdownUrl === imgSrc) {
+			console.log("URL直接匹配");
+			return true;
 		}
 
-		if (!url) return false;
+		// 对于远程URL，进行更精确的匹配
+		if (markdownUrl.startsWith("http") && imgSrc.startsWith("http")) {
+			try {
+				const markdownUrlObj = new URL(markdownUrl);
+				const imgSrcObj = new URL(imgSrc);
+
+				// 比较域名和路径（忽略查询参数）
+				if (
+					markdownUrlObj.hostname === imgSrcObj.hostname &&
+					markdownUrlObj.pathname === imgSrcObj.pathname
+				) {
+					console.log("URL域名和路径匹配");
+					return true;
+				}
+
+				// 比较文件名
+				const markdownFilename = this.extractFilenameFromUrl(
+					markdownUrlObj.pathname,
+				);
+				const imgFilename = this.extractFilenameFromUrl(
+					imgSrcObj.pathname,
+				);
+
+				if (this.compareFilenames(markdownFilename, imgFilename)) {
+					console.log("URL文件名匹配");
+					return true;
+				}
+			} catch (e) {
+				console.log("URL解析失败:", e);
+			}
+		}
 
 		// 检查文件名匹配
-		if (imgInfo.filename && url.includes(imgInfo.filename)) {
+		if (imgInfo.filename && markdownUrl.includes(imgInfo.filename)) {
+			console.log("URL包含文件名匹配");
 			return true;
 		}
 
-		// 检查域名匹配
-		if (imgInfo.domain && url.includes(imgInfo.domain)) {
-			return true;
+		console.log("URL匹配失败");
+		return false;
+	}
+
+	// 通过文件名匹配图片（用于Wiki链接）
+	private isMatchingImageByFilename(
+		markdownFilename: string,
+		imgInfo: { filename: string; domain: string; path: string },
+	): boolean {
+		console.log("文件名匹配检查:", {
+			markdownFilename,
+			imgInfoFilename: imgInfo.filename,
+		});
+
+		if (!markdownFilename || !imgInfo.filename) {
+			return false;
 		}
 
-		// 检查路径匹配
-		if (
-			imgInfo.path &&
-			(url.includes(imgInfo.path) || imgInfo.path.includes(url))
-		) {
-			return true;
-		}
+		// 使用compareFilenames方法进行比较
+		const result = this.compareFilenames(
+			markdownFilename,
+			imgInfo.filename,
+		);
+		console.log("文件名匹配结果:", result);
+		return result;
+	}
 
-		// 模糊匹配：检查 URL 的关键部分
+	// 从URL路径中提取文件名，处理URL编码
+	private extractFilenameFromUrl(pathname: string): string {
 		try {
-			const urlObj = new URL(url);
-			const urlFilename =
-				urlObj.pathname.split("/").pop()?.split("?")[0] || "";
-			if (urlFilename === imgInfo.filename) {
+			const filename = pathname.split("/").pop() || "";
+			// 解码URL编码的文件名
+			return decodeURIComponent(filename);
+		} catch (e) {
+			// 如果解码失败，返回原始文件名
+			return pathname.split("/").pop() || "";
+		}
+	}
+
+	// 比较两个文件名，考虑各种编码和格式差异
+	private compareFilenames(filename1: string, filename2: string): boolean {
+		if (!filename1 || !filename2) return false;
+
+		console.log("比较文件名:", { filename1, filename2 });
+
+		// 直接比较
+		if (filename1 === filename2) {
+			console.log("直接匹配");
+			return true;
+		}
+
+		// 移除扩展名后比较
+		const name1 = filename1.replace(/\.[^.]*$/, "");
+		const name2 = filename2.replace(/\.[^.]*$/, "");
+		if (name1 === name2) {
+			console.log("无扩展名匹配");
+			return true;
+		}
+
+		// 处理时间戳前缀（如：1770648740803-头像全身.png）
+		const cleanName1 = name1.replace(/^\d+-/, "");
+		const cleanName2 = name2.replace(/^\d+-/, "");
+		if (cleanName1 === cleanName2) {
+			console.log("清理时间戳后匹配");
+			return true;
+		}
+
+		// URL编码比较
+		try {
+			const encoded1 = encodeURIComponent(filename1);
+			const encoded2 = encodeURIComponent(filename2);
+			if (encoded1 === encoded2) {
+				console.log("编码后匹配");
+				return true;
+			}
+
+			const decoded1 = decodeURIComponent(filename1);
+			const decoded2 = decodeURIComponent(filename2);
+			if (decoded1 === decoded2) {
+				console.log("解码后匹配");
+				return true;
+			}
+
+			// 比较清理时间戳后的编码/解码版本
+			const cleanDecoded1 = decoded1
+				.replace(/^\d+-/, "")
+				.replace(/\.[^.]*$/, "");
+			const cleanDecoded2 = decoded2
+				.replace(/^\d+-/, "")
+				.replace(/\.[^.]*$/, "");
+			if (cleanDecoded1 === cleanDecoded2) {
+				console.log("清理时间戳解码后匹配");
 				return true;
 			}
 		} catch (e) {
-			// 如果不是完整 URL，进行简单的字符串匹配
-			if (
-				url.includes(imgInfo.filename) ||
-				imgInfo.filename.includes(url)
-			) {
-				return true;
-			}
+			// 编码解码失败，忽略
+			console.log("编码解码失败");
 		}
 
+		console.log("所有比较都失败");
 		return false;
 	}
 }
