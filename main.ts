@@ -37,6 +37,8 @@ export default class ImgurPlugin extends Plugin {
 	public uploader: COSUploader;
 	// 备份操作锁，防止同一笔记并发备份导致冲突
 	private backupLocks: Map<string, Promise<void>> = new Map();
+	// 备份同步防抖定时器
+	private backupSyncTimers: Map<string, NodeJS.Timeout> = new Map();
 
 	async onload() {
 		console.log("=== ImgurPlugin 开始加载 ===");
@@ -177,20 +179,6 @@ export default class ImgurPlugin extends Plugin {
 
 							console.log("已插入图片链接到编辑器");
 							new Notice("图片上传成功！");
-
-							// 先备份原始图片（在上传之后）
-							const backupImageName = await this.backupImage(
-								file,
-								activeFile,
-								"拖拽图片",
-							);
-
-							// 备份包含新图片的笔记内容，传入云端URL以便替换为本地引用
-							await this.backupNote(
-								activeFile,
-								backupImageName,
-								url,
-							);
 						} catch (error) {
 							new Notice("图片上传失败：" + error.message);
 							console.error("Upload error:", error);
@@ -262,20 +250,6 @@ export default class ImgurPlugin extends Plugin {
 
 							console.log("已插入图片链接到编辑器");
 							new Notice("图片上传成功！");
-
-							// 先备份原始图片（在上传之后）
-							const backupImageName = await this.backupImage(
-								file,
-								activeFile,
-								"粘贴图片",
-							);
-
-							// 备份包含新图片的笔记内容，传入云端URL以便替换为本地引用
-							await this.backupNote(
-								activeFile,
-								backupImageName,
-								url,
-							);
 						} catch (error) {
 							new Notice("图片上传失败：" + error.message);
 							console.error("Upload error:", error);
@@ -290,7 +264,7 @@ export default class ImgurPlugin extends Plugin {
 				if (file.extension !== "md") return;
 
 				menu.addItem((item) => {
-					item.setTitle("上传图片到腾讯云COS")
+					item.setTitle("上传本地图片")
 						.setIcon("image-plus")
 						.onClick(async () => {
 							if (!this.uploader) {
@@ -397,21 +371,6 @@ export default class ImgurPlugin extends Plugin {
 										);
 										return;
 									}
-								}
-
-								// 备份原始笔记内容
-								const backupFileName = `${file.basename}-backup.md`;
-								const backupFilePath = `${noteBackupFolderPath}/${backupFileName}`;
-								const existingBackup =
-									this.app.vault.getAbstractFileByPath(
-										backupFilePath,
-									);
-								if (!existingBackup) {
-									await this.app.vault.create(
-										backupFilePath,
-										content,
-									);
-									new Notice(`已备份笔记: ${backupFileName}`);
 								}
 
 								let newContent = content;
@@ -527,9 +486,33 @@ export default class ImgurPlugin extends Plugin {
 										`成功上传 ${uploadedCount} 张图片`,
 									);
 								}
+
+								// 上传完成后，同步备份笔记（使用最新的笔记内容，将云端URL替换为本地备份引用）
+								console.log(
+									"右键上传完成，开始同步备份笔记...",
+								);
+								await this.backupNote(file);
 							} catch (error) {
 								new Notice(`处理失败: ${error.message}`);
 								console.error("Process error:", error);
+							}
+						});
+				});
+
+				menu.addItem((item) => {
+					item.setTitle("在线笔记备份")
+						.setIcon("cloud")
+						.onClick(async () => {
+							if (!this.uploader) {
+								new Notice("COS上传器未初始化，请检查配置");
+								return;
+							}
+
+							try {
+								await this.backupOnlineNote(file);
+							} catch (error) {
+								new Notice(`处理失败: ${error.message}`);
+								console.error("Online backup error:", error);
 							}
 						});
 				});
@@ -705,6 +688,55 @@ export default class ImgurPlugin extends Plugin {
 			},
 		});
 
+		// 监听笔记修改事件，自动同步备份（防抖5秒）
+		this.registerEvent(
+			this.app.vault.on("modify", (file: TFile) => {
+				if (!(file instanceof TFile)) return;
+				if (file.extension !== "md") return;
+
+				// 跳过备份文件本身（避免无限循环）
+				if (file.name.endsWith("-backup.md")) return;
+
+				// 计算备份路径，检查该笔记是否有备份文件夹
+				let backupFolderPath: string;
+				if (this.settings.backupPath) {
+					backupFolderPath = this.settings.backupPath.startsWith("/")
+						? this.settings.backupPath.substring(1)
+						: this.settings.backupPath;
+				} else {
+					backupFolderPath = `${file.parent?.path || ""}/备份`;
+				}
+				const noteBackupFolderPath = `${backupFolderPath}/${file.basename}`;
+				const noteBackupFolder =
+					this.app.vault.getAbstractFileByPath(noteBackupFolderPath);
+
+				// 只有已经存在备份文件夹的笔记才自动同步
+				if (!noteBackupFolder) return;
+
+				console.log(`检测到笔记修改: ${file.path}，准备防抖同步备份`);
+
+				// 清除之前的定时器
+				const existingTimer = this.backupSyncTimers.get(file.path);
+				if (existingTimer) {
+					clearTimeout(existingTimer);
+				}
+
+				// 设置新的防抖定时器（5秒后同步）
+				const timer = setTimeout(async () => {
+					this.backupSyncTimers.delete(file.path);
+					try {
+						console.log(`自动同步备份笔记: ${file.path}`);
+						await this.backupNote(file);
+						console.log(`自动同步备份完成: ${file.path}`);
+					} catch (error) {
+						console.error(`自动同步备份失败: ${file.path}`, error);
+					}
+				}, 5000);
+
+				this.backupSyncTimers.set(file.path, timer);
+			}),
+		);
+
 		this.addSettingTab(new ImgurSettingTab(this.app, this, initUploader));
 
 		this.registerInterval(window.setInterval(() => {}, 5 * 60 * 1000));
@@ -716,6 +748,11 @@ export default class ImgurPlugin extends Plugin {
 		if (this.uploader) {
 			this.uploader.cleanup();
 		}
+		// 清理所有防抖定时器
+		for (const timer of this.backupSyncTimers.values()) {
+			clearTimeout(timer);
+		}
+		this.backupSyncTimers.clear();
 		new Notice("你的图床插件已卸载!");
 	}
 
@@ -836,6 +873,7 @@ export default class ImgurPlugin extends Plugin {
 		activeFile: TFile,
 		backupImageName?: string | null,
 		remoteUrl?: string,
+		editorContent?: string,
 	): Promise<void> {
 		// 使用文件路径作为锁的key，确保同一笔记的备份操作串行执行
 		const lockKey = activeFile.path;
@@ -859,7 +897,12 @@ export default class ImgurPlugin extends Plugin {
 		this.backupLocks.set(lockKey, lockPromise);
 
 		try {
-			await this.doBackupNote(activeFile, backupImageName, remoteUrl);
+			await this.doBackupNote(
+				activeFile,
+				backupImageName,
+				remoteUrl,
+				editorContent,
+			);
 			resolveLock!();
 		} catch (error) {
 			rejectLock!(error as Error);
@@ -869,11 +912,116 @@ export default class ImgurPlugin extends Plugin {
 		}
 	}
 
+	// 在线笔记备份：图片已上传，仅下载远程图片到备份目录并替换为备份地址
+	private async backupOnlineNote(activeFile: TFile): Promise<void> {
+		const content = await this.app.vault.read(activeFile);
+
+		const markdownImageRegex = /!\[([^\]]*?)\]\((https?:\/\/[^)]+)\)/g;
+		const matches = [...content.matchAll(markdownImageRegex)];
+
+		if (matches.length === 0) {
+			new Notice("未找到在线图片链接");
+			return;
+		}
+
+		// 创建备份文件夹
+		let backupFolderPath: string;
+		if (this.settings.backupPath) {
+			backupFolderPath = this.settings.backupPath.startsWith("/")
+				? this.settings.backupPath.substring(1)
+				: this.settings.backupPath;
+		} else {
+			backupFolderPath = `${activeFile.parent?.path || ""}/备份`;
+		}
+
+		let backupFolder =
+			this.app.vault.getAbstractFileByPath(backupFolderPath);
+		if (!backupFolder) {
+			backupFolder = await this.app.vault.createFolder(backupFolderPath);
+		}
+
+		// 创建笔记备份子文件夹
+		const noteBackupFolderPath = `${backupFolderPath}/${activeFile.basename}`;
+		let noteBackupFolder =
+			this.app.vault.getAbstractFileByPath(noteBackupFolderPath);
+		if (!noteBackupFolder) {
+			noteBackupFolder =
+				await this.app.vault.createFolder(noteBackupFolderPath);
+		}
+
+		const urlToBackupName = new Map<string, string>();
+		let downloadedCount = 0;
+
+		for (const match of matches) {
+			const imageUrl = match[2];
+			if (urlToBackupName.has(imageUrl)) {
+				continue;
+			}
+
+			try {
+				const urlObj = new URL(imageUrl);
+				const rawName = decodeURIComponent(
+					urlObj.pathname.substring(
+						urlObj.pathname.lastIndexOf("/") + 1,
+					),
+				);
+				const baseName = rawName || `image-${Date.now()}.png`;
+
+				let backupFileName = baseName;
+				let backupImagePath = `${noteBackupFolderPath}/${backupFileName}`;
+				let counter = 1;
+				while (this.app.vault.getAbstractFileByPath(backupImagePath)) {
+					const extension = baseName.split(".").pop() || "png";
+					const nameWithoutExt =
+						baseName.substring(0, baseName.lastIndexOf(".")) ||
+						baseName;
+					backupFileName = `${nameWithoutExt} (${counter}).${extension}`;
+					backupImagePath = `${noteBackupFolderPath}/${backupFileName}`;
+					counter++;
+				}
+
+				const response = await fetch(imageUrl);
+				if (!response.ok) {
+					throw new Error(`下载失败: ${response.status}`);
+				}
+
+				const buffer = await response.arrayBuffer();
+				await this.app.vault.createBinary(backupImagePath, buffer);
+				urlToBackupName.set(imageUrl, backupFileName);
+				downloadedCount++;
+			} catch (error) {
+				console.error(`下载图片失败: ${imageUrl}`, error);
+				new Notice(`下载失败: ${imageUrl}`);
+			}
+		}
+
+		let newContent = content;
+		for (const [remoteUrl, backupName] of urlToBackupName.entries()) {
+			const escapedUrl = this.escapeRegex(remoteUrl);
+			const replaceRegex = new RegExp(
+				`!\\[([^\\]]*?)\\]\\(${escapedUrl}\\)`,
+				"g",
+			);
+			newContent = newContent.replace(
+				replaceRegex,
+				`![$1](./${backupName})`,
+			);
+		}
+
+		if (downloadedCount > 0) {
+			await this.backupNote(activeFile, null, undefined, newContent);
+			new Notice(`在线笔记备份完成，已下载 ${downloadedCount} 张图片`);
+		} else {
+			new Notice("未下载到任何图片");
+		}
+	}
+
 	// 实际执行备份笔记的逻辑
 	private async doBackupNote(
 		activeFile: TFile,
 		backupImageName?: string | null,
 		remoteUrl?: string,
+		editorContent?: string,
 	): Promise<void> {
 		try {
 			// 创建备份文件夹
@@ -922,72 +1070,184 @@ export default class ImgurPlugin extends Plugin {
 			const noteBackupFilePath = `${noteBackupFolderPath}/${noteBackupFileName}`;
 
 			try {
-				// 优先读取现有备份文件内容，如果不存在则读取当前笔记
-				let noteContent: string;
-				const existingBackup = this.app.vault.getAbstractFileByPath(noteBackupFilePath);
-				if (existingBackup instanceof TFile) {
-					// 如果备份文件已存在，读取备份文件内容（已包含之前的本地图片链接）
-					noteContent = await this.app.vault.read(existingBackup);
-					console.log(`读取现有备份文件内容: ${noteBackupFileName}`);
+				// 优先使用传入的编辑器内容（避免vault.read的时序问题）
+				let currentContent: string;
+				if (editorContent) {
+					currentContent = editorContent;
+					console.log(`使用编辑器传入的最新内容进行备份`);
 				} else {
-					// 如果备份文件不存在，读取当前笔记内容
-					noteContent = await this.app.vault.read(activeFile);
-					console.log(`备份文件不存在，读取当前笔记内容`);
+					// 等待一小段时间让vault同步编辑器更改
+					await new Promise((resolve) => setTimeout(resolve, 300));
+					currentContent = await this.app.vault.read(activeFile);
+					console.log(`读取当前笔记内容，准备同步到备份`);
 				}
 
-				// 如果有备份的图片和远程URL，将云端URL替换为本地备份图片的链接
+				// 如果有新上传的图片，将云端URL替换为本地图片引用
 				if (backupImageName && remoteUrl) {
 					console.log(
-						`将云端URL替换为本地备份图片: ${backupImageName}, URL: ${remoteUrl.substring(0, 50)}...`,
+						`将云端URL替换为本地备份图片: ${backupImageName}`,
 					);
 
-					// 转义URL中的特殊字符以便在正则中使用
-					const escapedUrl = remoteUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+					// 先尝试简单的字符串替换（处理完整URL）
+					const urlWithoutParams = remoteUrl.split("?")[0];
 
-					// 匹配包含这个远程URL的markdown图片语法 ![alt](url)
-					const remoteImageRegex = new RegExp(
-						`!\\[[^\\]]*\\]\\(${escapedUrl}\\)`,
-						'g'
-					);
+					// 匹配所有可能的图片引用格式
+					const patterns = [
+						// 完整URL匹配
+						new RegExp(
+							`!\\[([^\\]]*)\\]\\(${this.escapeRegex(remoteUrl)}\\)`,
+							"g",
+						),
+						// URL不带参数匹配
+						new RegExp(
+							`!\\[([^\\]]*)\\]\\(${this.escapeRegex(urlWithoutParams)}[^)]*\\)`,
+							"g",
+						),
+					];
 
-					// 检查是否找到匹配的远程图片引用
-					if (remoteImageRegex.test(noteContent)) {
-						// 重置正则表达式
-						remoteImageRegex.lastIndex = 0;
-
-						// 将云端URL替换为本地备份图片路径
-						const localImageLink = `![${backupImageName}](${backupImageName})`;
-						noteContent = noteContent.replace(remoteImageRegex, localImageLink);
-						console.log(
-							`已将远程图片替换为本地引用: ${localImageLink}`,
-						);
-					} else {
-						console.log(
-							`未找到匹配的远程图片引用，URL可能包含特殊字符，尝试模糊匹配`,
-						);
-						// 如果精确匹配失败，尝试查找包含该URL的图片（可能有宽度参数）
-						const urlWithoutParams = remoteUrl.split('?')[0];
-						if (urlWithoutParams) {
-							const escapedBaseUrl = urlWithoutParams.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-							const fuzzyRegex = new RegExp(
-								`!\\[[^\\]]*\\]\\(${escapedBaseUrl}[^)]*\\)`,
-								'g'
+					let replaced = false;
+					for (const pattern of patterns) {
+						if (pattern.test(currentContent)) {
+							pattern.lastIndex = 0;
+							// 备份笔记和图片在同一个文件夹，使用相对路径
+							const localImageLink = `![${backupImageName}](./${backupImageName})`;
+							currentContent = currentContent.replace(
+								pattern,
+								localImageLink,
 							);
-							if (fuzzyRegex.test(noteContent)) {
-								fuzzyRegex.lastIndex = 0;
-								const localImageLink = `![${backupImageName}](${backupImageName})`;
-								noteContent = noteContent.replace(fuzzyRegex, localImageLink);
-								console.log(
-									`已模糊匹配并替换远程图片为本地引用: ${localImageLink}`,
-								);
-							}
+							console.log(
+								`已将远程图片替换为本地引用: ${localImageLink}`,
+							);
+							replaced = true;
+							break;
 						}
+					}
+
+					if (!replaced) {
+						console.log(
+							`未找到匹配的远程图片引用，URL: ${remoteUrl}`,
+						);
 					}
 				}
 
-				// 尝试创建或更新备份笔记
-				// 使用原子操作避免并发冲突
-				await this.createOrUpdateBackupNote(noteBackupFilePath, noteContent, noteBackupFileName);
+				// 全量扫描：将所有云端图片URL替换为本地备份图片引用
+				const backupImageFiles = this.app.vault
+					.getFiles()
+					.filter(
+						(f) =>
+							f.path.startsWith(noteBackupFolderPath + "/") &&
+							this.isImageFile(f),
+					);
+
+				if (backupImageFiles.length > 0) {
+					const cloudImageRegex =
+						/!\[([^\]]*)\]\((https?:\/\/[^)]+)\)/g;
+					const replacements: Array<{
+						fullMatch: string;
+						replacement: string;
+					}> = [];
+					let match;
+
+					while (
+						(match = cloudImageRegex.exec(currentContent)) !== null
+					) {
+						const fullMatch = match[0];
+						const url = match[2];
+
+						try {
+							const urlObj = new URL(url);
+							const urlPath = urlObj.pathname;
+							const urlFileName = decodeURIComponent(
+								urlPath.substring(urlPath.lastIndexOf("/") + 1),
+							);
+
+							// 上传文件名格式: ${Date.now()}-${processedName}.${extension}
+							// 去掉时间戳前缀得到原始处理后文件名
+							const nameWithoutTimestamp = urlFileName.replace(
+								/^\d+-/,
+								"",
+							);
+
+							// 在备份文件中查找匹配
+							const matchingBackup = backupImageFiles.find(
+								(f) => {
+									const backupName = f.name;
+									const backupNameNormalized =
+										backupName.replace(/\s+/g, "-");
+									return (
+										backupNameNormalized ===
+											nameWithoutTimestamp ||
+										backupName === nameWithoutTimestamp ||
+										backupNameNormalized.split(".")[0] ===
+											nameWithoutTimestamp.split(".")[0]
+									);
+								},
+							);
+
+							if (matchingBackup) {
+								replacements.push({
+									fullMatch,
+									replacement: `![${matchingBackup.name}](./${matchingBackup.name})`,
+								});
+								console.log(
+									`全量替换：云端图片 → 本地备份 ${matchingBackup.name}`,
+								);
+							}
+						} catch (e) {
+							// URL解析失败，跳过
+						}
+					}
+
+					for (const { fullMatch, replacement } of replacements) {
+						currentContent = currentContent.replace(
+							fullMatch,
+							replacement,
+						);
+					}
+				}
+
+				// 检查备份文件是否存在
+				let existingBackup =
+					this.app.vault.getAbstractFileByPath(noteBackupFilePath);
+
+				if (existingBackup instanceof TFile) {
+					// 备份文件已存在，更新内容
+					await this.app.vault.modify(existingBackup, currentContent);
+					console.log(`已更新备份笔记: ${noteBackupFileName}`);
+				} else {
+					// 备份文件不存在，创建新文件
+					try {
+						await this.app.vault.create(
+							noteBackupFilePath,
+							currentContent,
+						);
+						console.log(`已创建备份笔记: ${noteBackupFileName}`);
+						new Notice(`已创建笔记备份: ${noteBackupFileName}`);
+					} catch (createError) {
+						// 如果创建失败（可能是文件已存在），尝试修改
+						if (
+							createError.message &&
+							createError.message.includes("already exists")
+						) {
+							console.log(`备份文件已存在，尝试更新`);
+							existingBackup =
+								this.app.vault.getAbstractFileByPath(
+									noteBackupFilePath,
+								);
+							if (existingBackup instanceof TFile) {
+								await this.app.vault.modify(
+									existingBackup,
+									currentContent,
+								);
+								console.log(
+									`已更新备份笔记: ${noteBackupFileName}`,
+								);
+							}
+						} else {
+							throw createError;
+						}
+					}
+				}
 			} catch (error) {
 				console.error(`备份笔记内容失败:`, error);
 				new Notice(`备份笔记失败: ${error.message}`);
@@ -996,68 +1256,6 @@ export default class ImgurPlugin extends Plugin {
 			console.error(`备份笔记失败:`, error);
 			new Notice(`备份笔记失败: ${error.message}`);
 		}
-	}
-
-	// 原子化创建或更新备份笔记，处理并发冲突
-	private async createOrUpdateBackupNote(
-		filePath: string,
-		content: string,
-		fileName: string,
-	): Promise<void> {
-		const maxRetries = 3;
-		let lastError: Error | null = null;
-
-		for (let attempt = 0; attempt < maxRetries; attempt++) {
-			try {
-				// 尝试直接读取文件来判断是否存在
-				// 这比 getAbstractFileByPath 更可靠
-				let fileExists = false;
-				let existingFile: TFile | null = null;
-
-				try {
-					const abstractFile = this.app.vault.getAbstractFileByPath(filePath);
-					if (abstractFile instanceof TFile) {
-						fileExists = true;
-						existingFile = abstractFile;
-					}
-				} catch {
-					fileExists = false;
-				}
-
-				if (fileExists && existingFile) {
-					// 文件存在，直接修改
-					await this.app.vault.modify(existingFile, content);
-					console.log(`已更新笔记备份: ${fileName}`);
-					return;
-				} else {
-					// 文件不存在，尝试创建
-					try {
-						await this.app.vault.create(filePath, content);
-						console.log(`已创建笔记备份: ${fileName}`);
-						return;
-					} catch (createError) {
-						const errorMsg = String(createError?.message || createError);
-						// 如果是文件已存在错误，重试
-						if (errorMsg.toLowerCase().includes("already exists") ||
-							errorMsg.includes("已存在")) {
-							console.log(`创建时检测到文件已存在，第${attempt + 1}次重试...`);
-							// 短暂延迟后重试
-							await new Promise(resolve => setTimeout(resolve, 50 * (attempt + 1)));
-							continue;
-						}
-						throw createError;
-					}
-				}
-			} catch (error) {
-				lastError = error as Error;
-				console.log(`备份操作失败，第${attempt + 1}次重试:`, error);
-				// 短暂延迟后重试
-				await new Promise(resolve => setTimeout(resolve, 50 * (attempt + 1)));
-			}
-		}
-
-		// 所有重试都失败了
-		throw lastError || new Error(`无法创建或更新备份笔记: ${fileName}`);
 	}
 
 	async loadSettings() {
@@ -1119,6 +1317,11 @@ export default class ImgurPlugin extends Plugin {
 			file.extension.toLowerCase().match(/png|jpg|jpeg|gif|svg|webp/i) !==
 			null
 		);
+	}
+
+	// 转义正则表达式特殊字符
+	private escapeRegex(str: string): string {
+		return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 	}
 
 	//#region 注册图片大小调整功能
