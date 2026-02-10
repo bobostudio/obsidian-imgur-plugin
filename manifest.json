@@ -1,7 +1,7 @@
 {
 	"id": "imgur-tencent-cos",
 	"name": "Tencent COS for Imgur",
-	"version": "1.2.1",
+	"version": "1.2.2",
 	"minAppVersion": "1.0.1",
 	"description": "Upload images to Tencent COS for Imgur.",
 	"author": "bobostudio",
