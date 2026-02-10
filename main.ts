@@ -20,6 +20,7 @@ interface ImgurPluginSettings {
 	prefix: string;
 	expiration: number;
 	backupPath: string;
+	publicRead: boolean;
 }
 
 const DEFAULT_SETTINGS: ImgurPluginSettings = {
@@ -30,6 +31,7 @@ const DEFAULT_SETTINGS: ImgurPluginSettings = {
 	prefix: "",
 	expiration: 12 * 30 * 24 * 60 * 60,
 	backupPath: "",
+	publicRead: false,
 };
 
 export default class ImgurPlugin extends Plugin {
@@ -1996,6 +1998,26 @@ class ImgurSettingTab extends PluginSettingTab {
 					});
 			});
 
+		// 公有读开关
+		new Setting(containerEl)
+			.setName("公有读存储桶")
+			.setDesc(
+				"开启后使用干净的无签名URL（需将COS存储桶设置为公有读）。关闭则使用带签名的临时URL（更安全，但URL较长）",
+			)
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.publicRead)
+					.onChange(async (value) => {
+						this.plugin.settings.publicRead = value;
+						await this.plugin.saveSettings();
+						if (value) {
+							new Notice(
+								"已开启公有读模式，请确保COS存储桶已设置为公有读权限",
+							);
+						}
+					});
+			});
+
 		// 添加测试上传按钮
 		new Setting(containerEl)
 			.setName("测试上传")
@@ -2260,20 +2282,33 @@ class COSUploader {
 		expires?: number,
 	): Promise<string> {
 		const expiration = expires || this.settings.expiration;
-		console.log("获取签名URL参数:", {
+		const key = prefix ? prefix + fileName : fileName;
+
+		console.log("获取URL参数:", {
 			fileName,
 			prefix,
 			expires: expiration,
 			bucket: this.settings.bucket,
 			region: this.settings.region,
+			publicRead: this.settings.publicRead,
 		});
 
+		// 如果开启公有读，直接拼接 URL（无签名）
+		if (this.settings.publicRead) {
+			const bucket = this.settings.bucket;
+			const region = this.settings.region;
+			const cleanUrl = `https://${bucket}.cos.${region}.myqcloud.com/${key}`;
+			console.log("公有读URL生成成功:", cleanUrl);
+			return Promise.resolve(cleanUrl);
+		}
+
+		// 私有读模式：生成临时签名 URL
 		return new Promise((resolve, reject) => {
 			this.cos.getObjectUrl(
 				{
 					Bucket: this.settings.bucket,
 					Region: this.settings.region,
-					Key: prefix ? prefix + fileName : fileName,
+					Key: key,
 					Sign: true,
 					Expires: expiration,
 				},
