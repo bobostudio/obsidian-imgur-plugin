@@ -1480,7 +1480,6 @@ export default class ImgurPlugin extends Plugin {
 
 		console.log("提取的图片信息:", imgInfo);
 
-		let newContent = content;
 		let updated = false;
 
 		// 专门匹配 Markdown 图片语法：![alt](url) 或 ![alt*width](url)
@@ -1493,6 +1492,7 @@ export default class ImgurPlugin extends Plugin {
 			const fullMatch = match[0];
 			const altText = match[1];
 			const url = match[2];
+			const matchIndex = match.index;
 
 			console.log(`找到图片: ${fullMatch}`);
 			console.log(`Alt文本: "${altText}", URL: "${url}"`);
@@ -1510,9 +1510,18 @@ export default class ImgurPlugin extends Plugin {
 
 				console.log(`替换: ${fullMatch} -> ${replacement}`);
 
-				// 替换内容
-				newContent = newContent.replace(fullMatch, replacement);
+				// 计算替换位置
+				const startPos = editor.offsetToPos(matchIndex);
+				const endPos = editor.offsetToPos(matchIndex + fullMatch.length);
+
+				// 使用 replaceRange 进行局部替换，避免光标跳动
+				editor.replaceRange(replacement, startPos, endPos);
+
+				// 将光标定位到被调整图片的位置（在 ! 前面）
+				editor.setCursor(startPos);
+
 				updated = true;
+				new Notice(`图片大小已调整为 ${newWidth}px`);
 				break; // 找到第一个匹配就停止
 			}
 		}
@@ -1526,6 +1535,7 @@ export default class ImgurPlugin extends Plugin {
 				const fullMatch = match[0];
 				const filename = match[1];
 				const baseFilename = filename.split("|")[0];
+				const matchIndex = match.index;
 
 				console.log(
 					`找到 Wiki 图片: ${fullMatch}, 文件名: ${baseFilename}`,
@@ -1533,35 +1543,31 @@ export default class ImgurPlugin extends Plugin {
 
 				// 对于 Wiki 链接，通过文件名匹配
 				if (this.isMatchingImageByFilename(baseFilename, imgInfo)) {
-					console.log("Wiki 图片匹配成功，转换为 Markdown 格式");
+					console.log("Wiki 图片匹配成功，保持 Wiki 格式添加宽度");
 
-					// 将 Wiki 格式转换为 Markdown 格式并添加宽度
-					const replacement = `![${baseFilename}*${newWidth}](${imgSrc})`;
+					// 保持 Wiki 格式，添加宽度标记
+					const replacement = `![[${baseFilename}|${newWidth}]]`;
 
 					console.log(`替换: ${fullMatch} -> ${replacement}`);
 
-					newContent = newContent.replace(fullMatch, replacement);
+					// 计算替换位置
+					const startPos = editor.offsetToPos(matchIndex);
+					const endPos = editor.offsetToPos(matchIndex + fullMatch.length);
+
+					// 使用 replaceRange 进行局部替换，避免光标跳动
+					editor.replaceRange(replacement, startPos, endPos);
+
+					// 将光标定位到被调整图片的位置（在 ! 前面）
+					editor.setCursor(startPos);
+
 					updated = true;
+					new Notice(`图片大小已调整为 ${newWidth}px`);
 					break;
 				}
 			}
 		}
 
-		if (updated) {
-			// 保存当前光标位置和滚动位置
-			const cursor = editor.getCursor();
-			const scrollInfo = editor.getScrollInfo();
-			const scrollTop = scrollInfo?.top || 0;
-
-			editor.setValue(newContent);
-
-			// 恢复光标位置
-			editor.setCursor(cursor);
-			// 恢复滚动位置
-			editor.scrollTo(null, scrollTop);
-
-			new Notice(`图片大小已调整为 ${newWidth}px`);
-		} else {
+		if (!updated) {
 			console.log("未找到匹配的图片引用");
 			new Notice("未能更新图片大小到 Markdown 源码");
 		}
@@ -1645,10 +1651,30 @@ export default class ImgurPlugin extends Plugin {
 			}
 		}
 
-		// 检查文件名匹配
-		if (imgInfo.filename && markdownUrl.includes(imgInfo.filename)) {
-			console.log("URL包含文件名匹配");
-			return true;
+		// 检查文件名匹配（处理本地图片和远程图片）
+		if (imgInfo.filename) {
+			// 解码 URL 编码的文件名进行比较
+			const decodedImgFilename = decodeURIComponent(imgInfo.filename);
+
+			// 尝试多种匹配方式
+			if (markdownUrl.includes(imgInfo.filename)) {
+				console.log("URL包含文件名匹配");
+				return true;
+			}
+
+			if (markdownUrl.includes(decodedImgFilename)) {
+				console.log("URL包含解码后的文件名匹配");
+				return true;
+			}
+
+			// 提取 markdownUrl 中的文件名进行比较
+			const markdownFilename = markdownUrl.split("/").pop()?.split("?")[0] || "";
+			const decodedMarkdownFilename = decodeURIComponent(markdownFilename);
+
+			if (this.compareFilenames(decodedMarkdownFilename, decodedImgFilename)) {
+				console.log("提取的文件名匹配成功");
+				return true;
+			}
 		}
 
 		console.log("URL匹配失败");
