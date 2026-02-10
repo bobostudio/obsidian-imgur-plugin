@@ -1548,7 +1548,18 @@ export default class ImgurPlugin extends Plugin {
 		}
 
 		if (updated) {
+			// 保存当前光标位置和滚动位置
+			const cursor = editor.getCursor();
+			const scrollInfo = editor.getScrollInfo();
+			const scrollTop = scrollInfo?.top || 0;
+
 			editor.setValue(newContent);
+
+			// 恢复光标位置
+			editor.setCursor(cursor);
+			// 恢复滚动位置
+			editor.scrollTo(null, scrollTop);
+
 			new Notice(`图片大小已调整为 ${newWidth}px`);
 		} else {
 			console.log("未找到匹配的图片引用");
