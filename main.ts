@@ -264,7 +264,7 @@ export default class ImgurPlugin extends Plugin {
 				if (file.extension !== "md") return;
 
 				menu.addItem((item) => {
-					item.setTitle("上传本地图片")
+					item.setTitle("本地笔记备份")
 						.setIcon("image-plus")
 						.onClick(async () => {
 							if (!this.uploader) {
@@ -597,96 +597,96 @@ export default class ImgurPlugin extends Plugin {
 		});
 
 		// 添加上传本地wiki图片命令
-		this.addCommand({
-			id: "upload-local-wiki-images",
-			name: "上传本地Wiki图片到COS",
-			editorCallback: async (editor: Editor, view: MarkdownView) => {
-				if (!this.uploader) {
-					new Notice("请先配置COS设置");
-					return;
-				}
+		// this.addCommand({
+		// 	id: "upload-local-wiki-images",
+		// 	name: "上传本地Wiki图片到COS",
+		// 	editorCallback: async (editor: Editor, view: MarkdownView) => {
+		// 		if (!this.uploader) {
+		// 			new Notice("请先配置COS设置");
+		// 			return;
+		// 		}
 
-				const file = view.file;
-				if (!file) {
-					new Notice("未找到当前文件");
-					return;
-				}
+		// 		const file = view.file;
+		// 		if (!file) {
+		// 			new Notice("未找到当前文件");
+		// 			return;
+		// 		}
 
-				try {
-					const content = await this.app.vault.read(file);
+		// 		try {
+		// 			const content = await this.app.vault.read(file);
 
-					// 查找所有wiki格式的本地图片引用
-					const wikiImageRegex = /!\[\[([^\]]+?)(?:\|[^\]]+)?\]\]/g;
-					const matches = [...content.matchAll(wikiImageRegex)];
+		// 			// 查找所有wiki格式的本地图片引用
+		// 			const wikiImageRegex = /!\[\[([^\]]+?)(?:\|[^\]]+)?\]\]/g;
+		// 			const matches = [...content.matchAll(wikiImageRegex)];
 
-					if (matches.length === 0) {
-						new Notice("未找到本地Wiki图片");
-						return;
-					}
+		// 			if (matches.length === 0) {
+		// 				new Notice("未找到本地Wiki图片");
+		// 				return;
+		// 			}
 
-					console.log(`找到 ${matches.length} 个Wiki图片引用`);
+		// 			console.log(`找到 ${matches.length} 个Wiki图片引用`);
 
-					let newContent = content;
-					let uploadedCount = 0;
+		// 			let newContent = content;
+		// 			let uploadedCount = 0;
 
-					for (const match of matches) {
-						const fullMatch = match[0];
-						const imagePath = match[1].split("|")[0]; // 获取文件名部分
+		// 			for (const match of matches) {
+		// 				const fullMatch = match[0];
+		// 				const imagePath = match[1].split("|")[0]; // 获取文件名部分
 
-						console.log(`处理Wiki图片: ${imagePath}`);
+		// 				console.log(`处理Wiki图片: ${imagePath}`);
 
-						const imageFile = this.findImageFile(imagePath, file);
+		// 				const imageFile = this.findImageFile(imagePath, file);
 
-						if (!imageFile) {
-							console.log(`跳过图片: ${imagePath} (文件不存在)`);
-							continue;
-						}
+		// 				if (!imageFile) {
+		// 					console.log(`跳过图片: ${imagePath} (文件不存在)`);
+		// 					continue;
+		// 				}
 
-						try {
-							// 读取图片文件
-							const imageArrayBuffer =
-								await this.app.vault.readBinary(imageFile);
-							const imageBlob = new Blob([imageArrayBuffer]);
-							const imageToUpload = new File(
-								[imageBlob],
-								imageFile.name.replace(/\s/g, ""),
-								{ type: "image/png" },
-							);
+		// 				try {
+		// 					// 读取图片文件
+		// 					const imageArrayBuffer =
+		// 						await this.app.vault.readBinary(imageFile);
+		// 					const imageBlob = new Blob([imageArrayBuffer]);
+		// 					const imageToUpload = new File(
+		// 						[imageBlob],
+		// 						imageFile.name.replace(/\s/g, ""),
+		// 						{ type: "image/png" },
+		// 					);
 
-							console.log(`开始上传图片: ${imageFile.name}`);
+		// 					console.log(`开始上传图片: ${imageFile.name}`);
 
-							// 上传图片
-							const url =
-								await this.uploader.uploadFile(imageToUpload);
-							console.log(`图片上传成功，URL: ${url}`);
+		// 					// 上传图片
+		// 					const url =
+		// 						await this.uploader.uploadFile(imageToUpload);
+		// 					console.log(`图片上传成功，URL: ${url}`);
 
-							// 替换wiki链接为markdown链接
-							newContent = newContent.replace(
-								fullMatch,
-								`![${imageFile.name}](${url})`,
-							);
+		// 					// 替换wiki链接为markdown链接
+		// 					newContent = newContent.replace(
+		// 						fullMatch,
+		// 						`![${imageFile.name}](${url})`,
+		// 					);
 
-							uploadedCount++;
-							new Notice(`已上传: ${imageFile.name}`);
-						} catch (error) {
-							console.error(`上传图片 ${imagePath} 失败:`, error);
-							new Notice(
-								`上传失败: ${imagePath} - ${error.message}`,
-							);
-						}
-					}
+		// 					uploadedCount++;
+		// 					new Notice(`已上传: ${imageFile.name}`);
+		// 				} catch (error) {
+		// 					console.error(`上传图片 ${imagePath} 失败:`, error);
+		// 					new Notice(
+		// 						`上传失败: ${imagePath} - ${error.message}`,
+		// 					);
+		// 				}
+		// 			}
 
-					// 更新笔记内容
-					if (uploadedCount > 0) {
-						await this.app.vault.modify(file, newContent);
-						new Notice(`成功上传 ${uploadedCount} 张图片`);
-					}
-				} catch (error) {
-					console.error("处理失败:", error);
-					new Notice(`处理失败: ${error.message}`);
-				}
-			},
-		});
+		// 			// 更新笔记内容
+		// 			if (uploadedCount > 0) {
+		// 				await this.app.vault.modify(file, newContent);
+		// 				new Notice(`成功上传 ${uploadedCount} 张图片`);
+		// 			}
+		// 		} catch (error) {
+		// 			console.error("处理失败:", error);
+		// 			new Notice(`处理失败: ${error.message}`);
+		// 		}
+		// 	},
+		// });
 
 		// 监听笔记修改事件，自动同步备份（防抖5秒）
 		this.registerEvent(
