@@ -1,5 +1,4 @@
 ![banner](/images/banner2.png)
-
 # 腾讯云 COS 图床插件
 
 这是一个用于 Obsidian 的图片上传插件，可将笔记中的图片自动上传到腾讯云 COS，实现云端存储、管理与备份。
