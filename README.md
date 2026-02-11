@@ -1,4 +1,4 @@
-![banner](/images/banner.png)
+![banner](/images/banner2.png)
 
 # 腾讯云 COS 图床插件
 
@@ -91,7 +91,7 @@
 ## 使用前准备
 
 1. 注册腾讯云账号并开通 COS 服务
-![开通 COS 服务](./images/open-cos.png)
+   ![开通 COS 服务](./images/open-cos.png)
 2. 创建存储桶，记录存储桶名称（Bucket）和所在地域（Region）
 3. 获取 `SecretId` 和 `SecretKey`
 4. 访问 [腾讯云控制台](https://console.cloud.tencent.cn/cos)
@@ -143,11 +143,11 @@ app://obsidian.md
 
 1. 进入插件设置页面
 2. 填写以下信息：
-   - SecretId：腾讯云 API 密钥 ID
-   - SecretKey：腾讯云 API 密钥 Key
-   - Bucket：存储桶名称（例如：`my-bucket-1250000000`）
-   - Region：存储桶所在地域
-   - 存储路径前缀：文件在 COS 中的目录（例如：`images`）
+    - SecretId：腾讯云 API 密钥 ID
+    - SecretKey：腾讯云 API 密钥 Key
+    - Bucket：存储桶名称（例如：`my-bucket-1250000000`）
+    - Region：存储桶所在地域
+    - 存储路径前缀：文件在 COS 中的目录（例如：`images`）
 
 > 存储路径前缀说明
 
@@ -176,8 +176,8 @@ app://obsidian.md
 1. 在插件设置中先配置备份路径（默认在当前仓库下，可自定义）
 2. 按需选择备份方式并执行
 3. 备份类型说明：
-   - 本地笔记备份：适用于图片仍为本地链接、尚未上传/备份的笔记
-   - 在线笔记备份：适用于图片已是线上链接、尚未备份的笔记
+    - 本地笔记备份：适用于图片仍为本地链接、尚未上传/备份的笔记
+    - 在线笔记备份：适用于图片已是线上链接、尚未备份的笔记
 4. 执行后会按设置路径生成对应备份文件
 
 ### 方式四：图片管理
