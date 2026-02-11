@@ -21,6 +21,7 @@ interface ImgurPluginSettings {
 	expiration: number;
 	backupPath: string;
 	publicRead: boolean;
+	enableCustomNaming: boolean;
 }
 
 const DEFAULT_SETTINGS: ImgurPluginSettings = {
@@ -32,6 +33,7 @@ const DEFAULT_SETTINGS: ImgurPluginSettings = {
 	expiration: 12 * 30 * 24 * 60 * 60,
 	backupPath: "",
 	publicRead: false,
+	enableCustomNaming: false,
 };
 
 export default class ImgurPlugin extends Plugin {
@@ -171,13 +173,29 @@ export default class ImgurPlugin extends Plugin {
 
 							console.log("开始处理拖拽的图片文件:", file.name);
 
-							// 上传图片
-							const url = await this.uploader.uploadFile(file);
-							console.log("拖拽图片上传完成，获得URL:", url);
+							// 准备笔记信息
+							const noteInfo = {
+								noteName: activeFile.basename || "未命名",
+								notePath: activeFile.path,
+							};
 
-							// 直接插入云端URL到编辑器
+							// 上传图片
+							const result = await this.uploader.uploadFile(
+								file,
+								undefined,
+								noteInfo,
+							);
+							console.log(
+								"拖拽图片上传完成，获得URL:",
+								result.url,
+							);
+
+							// 直接插入云端URL到编辑器，使用生成的 displayName 作为 alt
 							const pos = editor.getCursor();
-							editor.replaceRange(`![${file.name}](${url})`, pos);
+							editor.replaceRange(
+								`![${result.displayName}](${result.url})`,
+								pos,
+							);
 
 							console.log("已插入图片链接到编辑器");
 							new Notice("图片上传成功！");
@@ -242,13 +260,29 @@ export default class ImgurPlugin extends Plugin {
 
 							console.log("开始处理粘贴的图片文件:", file.name);
 
-							// 上传图片
-							const url = await this.uploader.uploadFile(file);
-							console.log("粘贴图片上传完成，获得URL:", url);
+							// 准备笔记信息
+							const noteInfo = {
+								noteName: activeFile.basename || "未命名",
+								notePath: activeFile.path,
+							};
 
-							// 直接插入云端URL到编辑器
+							// 上传图片
+							const result = await this.uploader.uploadFile(
+								file,
+								undefined,
+								noteInfo,
+							);
+							console.log(
+								"粘贴图片上传完成，获得URL:",
+								result.url,
+							);
+
+							// 直接插入云端URL到编辑器，使用生成的 displayName 作为 alt
 							const pos = editor.getCursor();
-							editor.replaceRange(`![${file.name}](${url})`, pos);
+							editor.replaceRange(
+								`![${result.displayName}](${result.url})`,
+								pos,
+							);
 
 							console.log("已插入图片链接到编辑器");
 							new Notice("图片上传成功！");
@@ -424,22 +458,67 @@ export default class ImgurPlugin extends Plugin {
 											{ type: "image/png" },
 										);
 
-										// 备份原始图片
+										// 准备笔记信息
+										const noteInfo = {
+											noteName: file.basename || "未命名",
+											notePath: file.path,
+										};
+
+										// 上传图片到COS
+										console.log(
+											`开始上传图片: ${imageFile.name}`,
+										);
+										const result =
+											await this.uploader.uploadFile(
+												imageToUpload,
+												undefined,
+												noteInfo,
+											);
+										console.log(
+											`图片上传成功，URL: ${result.url}`,
+										);
+
+										// 按上传后的规则命名备份图片，和云端命名保持一致
 										try {
-											const backupImagePath = `${noteBackupFolderPath}/${imageFile.name}`;
-											const existingImageBackup =
+											const extension =
+												imageFile.extension ||
+												imageFile.name
+													.split(".")
+													.pop() ||
+												"png";
+											const desiredBackupFileName =
+												this.sanitizeBackupFileName(
+													`${result.displayName}.${extension}`,
+												);
+											let backupFileName =
+												desiredBackupFileName;
+											let backupImagePath = `${noteBackupFolderPath}/${backupFileName}`;
+											let counter = 1;
+
+											while (
 												this.app.vault.getAbstractFileByPath(
 													backupImagePath,
-												);
-											if (!existingImageBackup) {
-												await this.app.vault.createBinary(
-													backupImagePath,
-													imageArrayBuffer,
-												);
-												console.log(
-													`备份成功: ${imageFile.name}`,
-												);
+												)
+											) {
+												const nameWithoutExt =
+													desiredBackupFileName.substring(
+														0,
+														desiredBackupFileName.lastIndexOf(
+															".",
+														),
+													) || desiredBackupFileName;
+												backupFileName = `${nameWithoutExt} (${counter}).${extension}`;
+												backupImagePath = `${noteBackupFolderPath}/${backupFileName}`;
+												counter++;
 											}
+
+											await this.app.vault.createBinary(
+												backupImagePath,
+												imageArrayBuffer,
+											);
+											console.log(
+												`备份成功: ${backupFileName}`,
+											);
 										} catch (backupError) {
 											console.error(
 												`备份图片 ${imageFile.name} 失败:`,
@@ -447,22 +526,10 @@ export default class ImgurPlugin extends Plugin {
 											);
 										}
 
-										// 上传图片到COS
-										console.log(
-											`开始上传图片: ${imageFile.name}`,
-										);
-										const url =
-											await this.uploader.uploadFile(
-												imageToUpload,
-											);
-										console.log(
-											`图片上传成功，URL: ${url}`,
-										);
-
-										// 替换wiki链接为markdown链接
+										// 替换wiki链接为markdown链接，使用生成的 displayName
 										newContent = newContent.replace(
 											fullMatch,
-											`![${imageFile.name}](${url})`,
+											`![${result.displayName}](${result.url})`,
 										);
 
 										uploadedCount++;
@@ -952,7 +1019,9 @@ export default class ImgurPlugin extends Plugin {
 		}
 
 		const urlToBackupName = new Map<string, string>();
+		const canonicalToBackupName = new Map<string, string>();
 		let downloadedCount = 0;
+		let reusedCount = 0;
 
 		for (const match of matches) {
 			const imageUrl = match[2];
@@ -967,19 +1036,29 @@ export default class ImgurPlugin extends Plugin {
 						urlObj.pathname.lastIndexOf("/") + 1,
 					),
 				);
-				const baseName = rawName || `image-${Date.now()}.png`;
+				const canonicalKey = `${urlObj.hostname}${decodeURIComponent(urlObj.pathname)}`;
 
-				let backupFileName = baseName;
-				let backupImagePath = `${noteBackupFolderPath}/${backupFileName}`;
-				let counter = 1;
-				while (this.app.vault.getAbstractFileByPath(backupImagePath)) {
-					const extension = baseName.split(".").pop() || "png";
-					const nameWithoutExt =
-						baseName.substring(0, baseName.lastIndexOf(".")) ||
-						baseName;
-					backupFileName = `${nameWithoutExt} (${counter}).${extension}`;
-					backupImagePath = `${noteBackupFolderPath}/${backupFileName}`;
-					counter++;
+				// 同一图片（仅签名参数变化）直接复用本次已解析结果
+				const alreadyMappedName =
+					canonicalToBackupName.get(canonicalKey);
+				if (alreadyMappedName) {
+					urlToBackupName.set(imageUrl, alreadyMappedName);
+					reusedCount++;
+					continue;
+				}
+
+				const baseName = this.sanitizeBackupFileName(
+					rawName || `image-${Date.now()}.png`,
+				);
+
+				const backupImagePath = `${noteBackupFolderPath}/${baseName}`;
+				const existingBackup =
+					this.app.vault.getAbstractFileByPath(backupImagePath);
+				if (existingBackup instanceof TFile) {
+					urlToBackupName.set(imageUrl, baseName);
+					canonicalToBackupName.set(canonicalKey, baseName);
+					reusedCount++;
+					continue;
 				}
 
 				const response = await fetch(imageUrl);
@@ -989,7 +1068,8 @@ export default class ImgurPlugin extends Plugin {
 
 				const buffer = await response.arrayBuffer();
 				await this.app.vault.createBinary(backupImagePath, buffer);
-				urlToBackupName.set(imageUrl, backupFileName);
+				urlToBackupName.set(imageUrl, baseName);
+				canonicalToBackupName.set(canonicalKey, baseName);
 				downloadedCount++;
 			} catch (error) {
 				console.error(`下载图片失败: ${imageUrl}`, error);
@@ -1010,9 +1090,11 @@ export default class ImgurPlugin extends Plugin {
 			);
 		}
 
-		if (downloadedCount > 0) {
+		if (urlToBackupName.size > 0) {
 			await this.backupNote(activeFile, null, undefined, newContent);
-			new Notice(`在线笔记备份完成，已下载 ${downloadedCount} 张图片`);
+			new Notice(
+				`在线笔记备份完成，已下载 ${downloadedCount} 张，复用 ${reusedCount} 张`,
+			);
 		} else {
 			new Notice("未下载到任何图片");
 		}
@@ -1082,6 +1164,65 @@ export default class ImgurPlugin extends Plugin {
 					await new Promise((resolve) => setTimeout(resolve, 300));
 					currentContent = await this.app.vault.read(activeFile);
 					console.log(`读取当前笔记内容，准备同步到备份`);
+				}
+
+				// 如果备份笔记里仍是云端URL，先下载到本地备份目录
+				const cloudImageRegexForDownload =
+					/!\[([^\]]*)\]\((https?:\/\/[^)]+)\)/g;
+				const remoteMatches = [
+					...currentContent.matchAll(cloudImageRegexForDownload),
+				];
+				if (remoteMatches.length > 0) {
+					for (const m of remoteMatches) {
+						const remote = m[2];
+						try {
+							const urlObj = new URL(remote);
+							const remoteFileName = decodeURIComponent(
+								urlObj.pathname.substring(
+									urlObj.pathname.lastIndexOf("/") + 1,
+								),
+							);
+							const safeBaseName = this.sanitizeBackupFileName(
+								remoteFileName || `image-${Date.now()}.png`,
+							);
+
+							let localName = safeBaseName;
+							let localPath = `${noteBackupFolderPath}/${localName}`;
+							let counter = 1;
+							while (
+								this.app.vault.getAbstractFileByPath(localPath)
+							) {
+								const ext =
+									safeBaseName.split(".").pop() || "png";
+								const baseNoExt =
+									safeBaseName.substring(
+										0,
+										safeBaseName.lastIndexOf("."),
+									) || safeBaseName;
+								localName = `${baseNoExt} (${counter}).${ext}`;
+								localPath = `${noteBackupFolderPath}/${localName}`;
+								counter++;
+							}
+
+							// 仅在不存在同名文件时下载
+							if (
+								!this.app.vault.getAbstractFileByPath(
+									`${noteBackupFolderPath}/${safeBaseName}`,
+								)
+							) {
+								const response = await fetch(remote);
+								if (response.ok) {
+									const buffer = await response.arrayBuffer();
+									await this.app.vault.createBinary(
+										localPath,
+										buffer,
+									);
+								}
+							}
+						} catch (e) {
+							console.error(`云端图片下载失败: ${remote}`, e);
+						}
+					}
 				}
 
 				// 如果有新上传的图片，将云端URL替换为本地图片引用
@@ -1163,25 +1304,45 @@ export default class ImgurPlugin extends Plugin {
 								urlPath.substring(urlPath.lastIndexOf("/") + 1),
 							);
 
-							// 上传文件名格式: ${Date.now()}-${processedName}.${extension}
-							// 去掉时间戳前缀得到原始处理后文件名
-							const nameWithoutTimestamp = urlFileName.replace(
-								/^\d+-/,
-								"",
-							);
+							const nameWithoutLegacyTimestamp =
+								urlFileName.replace(/^\d+-/, "");
+							const normalizedUrlFileName =
+								this.normalizeBackupMatchName(urlFileName);
+							const normalizedLegacyName =
+								this.normalizeBackupMatchName(
+									nameWithoutLegacyTimestamp,
+								);
 
 							// 在备份文件中查找匹配
 							const matchingBackup = backupImageFiles.find(
 								(f) => {
 									const backupName = f.name;
 									const backupNameNormalized =
-										backupName.replace(/\s+/g, "-");
+										this.normalizeBackupMatchName(
+											backupName,
+										);
+									const backupNameNormalizedLegacy =
+										this.normalizeBackupMatchName(
+											backupName.replace(/^\d+-/, ""),
+										);
+									const backupNoExt =
+										backupNameNormalized.split(".")[0];
+									const urlNoExt =
+										normalizedUrlFileName.split(".")[0];
+									const legacyNoExt =
+										normalizedLegacyName.split(".")[0];
 									return (
+										backupName === urlFileName ||
 										backupNameNormalized ===
-											nameWithoutTimestamp ||
-										backupName === nameWithoutTimestamp ||
-										backupNameNormalized.split(".")[0] ===
-											nameWithoutTimestamp.split(".")[0]
+											normalizedUrlFileName ||
+										backupNameNormalizedLegacy ===
+											normalizedLegacyName ||
+										backupName ===
+											nameWithoutLegacyTimestamp ||
+										backupNameNormalized ===
+											normalizedLegacyName ||
+										backupNoExt === urlNoExt ||
+										backupNoExt === legacyNoExt
 									);
 								},
 							);
@@ -1324,6 +1485,26 @@ export default class ImgurPlugin extends Plugin {
 	// 转义正则表达式特殊字符
 	private escapeRegex(str: string): string {
 		return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	}
+
+	// 将备份文件名转换为本地文件系统安全名称（兼容 Windows）
+	private sanitizeBackupFileName(fileName: string): string {
+		const lastDot = fileName.lastIndexOf(".");
+		const hasExt = lastDot > 0;
+		const base = hasExt ? fileName.substring(0, lastDot) : fileName;
+		const ext = hasExt ? fileName.substring(lastDot + 1) : "";
+		const safeBase = base
+			.replace(/[\\/:*?"<>|]/g, "-")
+			.replace(/\s+/g, "-")
+			.replace(/-+/g, "-")
+			.replace(/^-|-$/g, "");
+		const safeExt = ext.replace(/[\\/:*?"<>|]/g, "").trim();
+		if (!safeBase) return safeExt ? `image.${safeExt}` : "image.png";
+		return safeExt ? `${safeBase}.${safeExt}` : safeBase;
+	}
+
+	private normalizeBackupMatchName(fileName: string): string {
+		return this.sanitizeBackupFileName(fileName).toLowerCase();
 	}
 
 	//#region 注册图片大小调整功能
@@ -1514,7 +1695,9 @@ export default class ImgurPlugin extends Plugin {
 
 				// 计算替换位置
 				const startPos = editor.offsetToPos(matchIndex);
-				const endPos = editor.offsetToPos(matchIndex + fullMatch.length);
+				const endPos = editor.offsetToPos(
+					matchIndex + fullMatch.length,
+				);
 
 				// 使用 replaceRange 进行局部替换，避免光标跳动
 				editor.replaceRange(replacement, startPos, endPos);
@@ -1554,7 +1737,9 @@ export default class ImgurPlugin extends Plugin {
 
 					// 计算替换位置
 					const startPos = editor.offsetToPos(matchIndex);
-					const endPos = editor.offsetToPos(matchIndex + fullMatch.length);
+					const endPos = editor.offsetToPos(
+						matchIndex + fullMatch.length,
+					);
 
 					// 使用 replaceRange 进行局部替换，避免光标跳动
 					editor.replaceRange(replacement, startPos, endPos);
@@ -1670,10 +1855,17 @@ export default class ImgurPlugin extends Plugin {
 			}
 
 			// 提取 markdownUrl 中的文件名进行比较
-			const markdownFilename = markdownUrl.split("/").pop()?.split("?")[0] || "";
-			const decodedMarkdownFilename = decodeURIComponent(markdownFilename);
+			const markdownFilename =
+				markdownUrl.split("/").pop()?.split("?")[0] || "";
+			const decodedMarkdownFilename =
+				decodeURIComponent(markdownFilename);
 
-			if (this.compareFilenames(decodedMarkdownFilename, decodedImgFilename)) {
+			if (
+				this.compareFilenames(
+					decodedMarkdownFilename,
+					decodedImgFilename,
+				)
+			) {
 				console.log("提取的文件名匹配成功");
 				return true;
 			}
@@ -2018,6 +2210,24 @@ class ImgurSettingTab extends PluginSettingTab {
 					});
 			});
 
+		// 自定义图片命名开关
+		new Setting(containerEl)
+			.setName("启用规则图片命名")
+			.setDesc(
+				"开启后，上传的图片将按格式命名：笔记名-时间戳-笔记图片序号。例如：好用的开源工具-2026-0211-16:08:52-1.png",
+			)
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.enableCustomNaming)
+					.onChange(async (value) => {
+						this.plugin.settings.enableCustomNaming = value;
+						await this.plugin.saveSettings();
+						if (value) {
+							new Notice("已开启规则图片命名");
+						}
+					});
+			});
+
 		// 添加测试上传按钮
 		new Setting(containerEl)
 			.setName("测试上传")
@@ -2078,6 +2288,8 @@ class COSUploader {
 	private settings: ImgurPluginSettings;
 	private urlCache: Map<string, string>;
 	private updateInterval: NodeJS.Timeout | null = null;
+	// 笔记图片上传计数器：文件路径 -> 当前计数
+	private noteImageCounter: Map<string, number> = new Map();
 
 	constructor(settings: ImgurPluginSettings) {
 		console.log("COSUploader构造函数被调用，设置:", {
@@ -2202,7 +2414,8 @@ class COSUploader {
 	async uploadFile(
 		file: File,
 		backupCallback?: (fileName: string) => Promise<void>,
-	): Promise<string> {
+		noteInfo?: { noteName: string; notePath: string },
+	): Promise<{ url: string; displayName: string }> {
 		if (!this.settings.bucket || !this.settings.region) {
 			throw new Error("请先配置存储桶和地域信息");
 		}
@@ -2216,12 +2429,45 @@ class COSUploader {
 
 		const originalName = file.name;
 		const extension = originalName.split(".").pop();
-		const nameWithoutExt = originalName.substring(
-			0,
-			originalName.lastIndexOf("."),
-		);
-		const processedName = nameWithoutExt.replace(/\s+/g, "-");
-		const fileName = `${Date.now()}-${processedName}.${extension}`;
+
+		let fileName: string;
+		let displayName: string;
+
+		// 如果启用自定义命名且有笔记信息
+		if (this.settings.enableCustomNaming && noteInfo) {
+			// 获取当前计数并递增
+			const currentCount =
+				this.noteImageCounter.get(noteInfo.notePath) || 0;
+			const newCount = currentCount + 1;
+			this.noteImageCounter.set(noteInfo.notePath, newCount);
+
+			// 生成时间戳：2026-0211-16:08:52 格式
+			const now = new Date();
+			const year = now.getFullYear();
+			const month = String(now.getMonth() + 1).padStart(2, "0");
+			const day = String(now.getDate()).padStart(2, "0");
+			const hours = String(now.getHours()).padStart(2, "0");
+			const minutes = String(now.getMinutes()).padStart(2, "0");
+			const seconds = String(now.getSeconds()).padStart(2, "0");
+			const timestamp = `${year}-${month}${day}-${hours}:${minutes}:${seconds}`;
+
+			// 处理笔记名：移除空格
+			const cleanNoteName = noteInfo.noteName.replace(/\s+/g, "");
+
+			// 生成文件名：笔记名-时间戳-NoteID
+			displayName = `${cleanNoteName}-${timestamp}-${newCount}`;
+			fileName = `${displayName}.${extension}`;
+			console.log("使用自定义命名:", fileName);
+		} else {
+			// 默认命名方式
+			const nameWithoutExt = originalName.substring(
+				0,
+				originalName.lastIndexOf("."),
+			);
+			const processedName = nameWithoutExt.replace(/\s+/g, "-");
+			displayName = `${Date.now()}-${processedName}`;
+			fileName = `${displayName}.${extension}`;
+		}
 
 		const prefix = this.settings.prefix ? `${this.settings.prefix}/` : "";
 		const fullPath = `${prefix}${fileName}`;
@@ -2266,7 +2512,7 @@ class COSUploader {
 						console.log("获取到签名URL:", url);
 
 						this.urlCache.set(fullPath, url);
-						resolve(url);
+						resolve({ url, displayName });
 					} catch (error) {
 						console.error("获取签名URL失败:", error);
 						reject(error);
