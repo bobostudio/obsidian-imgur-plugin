@@ -8,6 +8,7 @@ import {
 	Notice,
 	Plugin,
 	PluginSettingTab,
+	requestUrl,
 	Setting,
 	TFile,
 } from "obsidian";
@@ -1145,7 +1146,7 @@ export default class ImgurPlugin extends Plugin {
 		}
 	}
 
-	// 在线笔记备份：图片已上传，仅下载远程图片到备份目录并替换为备份地址
+	// 在线笔记备份：下载外部图片，上传到COS，替换为COS URL，同时本地备份
 	private async backupOnlineNote(activeFile: TFile): Promise<void> {
 		const content = await this.app.vault.read(activeFile);
 
@@ -1182,14 +1183,26 @@ export default class ImgurPlugin extends Plugin {
 				await this.app.vault.createFolder(noteBackupFolderPath);
 		}
 
-		const urlToBackupName = new Map<string, string>();
-		const canonicalToBackupName = new Map<string, string>();
+		// 判断是否为COS URL
+		const isCosUrl = (url: string): boolean => {
+			try {
+				const urlObj = new URL(url);
+				// 检查是否匹配COS域名模式: {bucket}.cos.{region}.myqcloud.com
+				return /\.cos\.[a-z-]+\.myqcloud\.com$/i.test(urlObj.hostname);
+			} catch {
+				return false;
+			}
+		};
+
+		const urlToCosUrl = new Map<string, string>(); // 原始URL -> COS URL
+		const urlToBackupName = new Map<string, string>(); // COS URL -> 本地备份文件名
 		let downloadedCount = 0;
-		let reusedCount = 0;
+		let uploadedCount = 0;
+		let cosSkippedCount = 0;
 
 		for (const match of matches) {
 			const imageUrl = match[2];
-			if (urlToBackupName.has(imageUrl)) {
+			if (urlToCosUrl.has(imageUrl)) {
 				continue;
 			}
 
@@ -1200,67 +1213,110 @@ export default class ImgurPlugin extends Plugin {
 						urlObj.pathname.lastIndexOf("/") + 1,
 					),
 				);
-				const canonicalKey = `${urlObj.hostname}${decodeURIComponent(urlObj.pathname)}`;
 
-				// 同一图片（仅签名参数变化）直接复用本次已解析结果
-				const alreadyMappedName =
-					canonicalToBackupName.get(canonicalKey);
-				if (alreadyMappedName) {
-					urlToBackupName.set(imageUrl, alreadyMappedName);
-					reusedCount++;
+				// 如果是COS URL，跳过上传，但可能需要本地备份
+				if (isCosUrl(imageUrl)) {
+					// COS URL保持不变，但下载到本地备份
+					const baseName = this.sanitizeBackupFileName(
+						rawName || `image-${Date.now()}.png`,
+					);
+					const backupImagePath = `${noteBackupFolderPath}/${baseName}`;
+					
+					// 检查是否已存在备份
+					const existingBackup =
+						this.app.vault.getAbstractFileByPath(backupImagePath);
+					if (!existingBackup) {
+						// 下载COS图片到本地备份
+						try {
+							const response = await requestUrl({
+								url: imageUrl,
+								method: "GET",
+							});
+							if (response.status === 200) {
+								await this.app.vault.createBinary(
+									backupImagePath,
+									response.arrayBuffer,
+								);
+								cosSkippedCount++;
+							}
+						} catch (e) {
+							console.error(`备份COS图片失败: ${imageUrl}`, e);
+						}
+					}
+					// COS URL保持不变，不加入urlToCosUrl（不替换）
 					continue;
 				}
 
+				// 非COS图片：下载并上传到COS
 				const baseName = this.sanitizeBackupFileName(
 					rawName || `image-${Date.now()}.png`,
 				);
 
-				const backupImagePath = `${noteBackupFolderPath}/${baseName}`;
-				const existingBackup =
-					this.app.vault.getAbstractFileByPath(backupImagePath);
-				if (existingBackup instanceof TFile) {
-					urlToBackupName.set(imageUrl, baseName);
-					canonicalToBackupName.set(canonicalKey, baseName);
-					reusedCount++;
-					continue;
-				}
-
-				const response = await fetch(imageUrl);
-				if (!response.ok) {
+				// 使用requestUrl下载图片（绕过CORS）
+				const response = await requestUrl({
+					url: imageUrl,
+					method: "GET",
+				});
+				if (response.status !== 200) {
 					throw new Error(`下载失败: ${response.status}`);
 				}
 
-				const buffer = await response.arrayBuffer();
+				const buffer = response.arrayBuffer;
+				const backupImagePath = `${noteBackupFolderPath}/${baseName}`;
 				await this.app.vault.createBinary(backupImagePath, buffer);
-				urlToBackupName.set(imageUrl, baseName);
-				canonicalToBackupName.set(canonicalKey, baseName);
 				downloadedCount++;
+
+				// 上传到COS
+				const blob = new Blob([buffer]);
+				const fileToUpload = new File([blob], baseName, {
+					type: response.headers["content-type"] || "image/png",
+				});
+
+				const noteInfo = {
+					noteName: activeFile.basename || "未命名",
+					notePath: activeFile.path,
+				};
+
+				const result = await this.uploader.uploadFile(
+					fileToUpload,
+					undefined,
+					noteInfo,
+				);
+				uploadedCount++;
+
+				// 记录替换关系
+				urlToCosUrl.set(imageUrl, result.url);
+				urlToBackupName.set(result.url, baseName);
 			} catch (error) {
-				console.error(`下载图片失败: ${imageUrl}`, error);
-				new Notice(`下载失败: ${imageUrl}`);
+				console.error(`处理图片失败: ${imageUrl}`, error);
+				new Notice(`处理失败: ${imageUrl}`);
 			}
 		}
 
+		// 替换笔记中的外部URL为COS URL（COS URL保持不变）
 		let newContent = content;
-		for (const [remoteUrl, backupName] of urlToBackupName.entries()) {
-			const escapedUrl = this.escapeRegex(remoteUrl);
+		for (const [originalUrl, cosUrl] of urlToCosUrl.entries()) {
+			const escapedUrl = this.escapeRegex(originalUrl);
 			const replaceRegex = new RegExp(
 				`!\\[([^\\]]*?)\\]\\(${escapedUrl}\\)`,
 				"g",
 			);
-			newContent = newContent.replace(
-				replaceRegex,
-				`![$1](./${backupName})`,
-			);
+			newContent = newContent.replace(replaceRegex, `![$1](${cosUrl})`);
 		}
 
-		if (urlToBackupName.size > 0) {
+		// 更新笔记内容（将外部URL替换为COS URL）
+		if (urlToCosUrl.size > 0) {
+			await this.app.vault.modify(activeFile, newContent);
+		}
+
+		// 创建备份笔记（使用COS URL）
+		if (urlToCosUrl.size > 0 || downloadedCount > 0 || cosSkippedCount > 0) {
 			await this.backupNote(activeFile, null, undefined, newContent);
 			new Notice(
-				`在线笔记备份完成，已下载 ${downloadedCount} 张，复用 ${reusedCount} 张`,
+				`在线笔记备份完成，已处理 ${downloadedCount} 张外部图片，上传 ${uploadedCount} 张到COS，COS图片备份 ${cosSkippedCount} 张`,
 			);
 		} else {
-			new Notice("未下载到任何图片");
+			new Notice("未处理任何图片");
 		}
 	}
 
