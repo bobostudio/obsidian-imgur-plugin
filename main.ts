@@ -300,6 +300,170 @@ export default class ImgurPlugin extends Plugin {
 				if (file.extension !== "md") return;
 
 				menu.addItem((item) => {
+					item.setTitle("图片同步COS")
+						.setIcon("upload-cloud")
+						.onClick(async () => {
+							if (!this.uploader) {
+								new Notice("COS上传器未初始化，请检查配置");
+								return;
+							}
+
+							try {
+								const content = await this.app.vault.read(file);
+
+								// 查找所有图片引用（包括本地wiki格式和云端URL）
+								const wikiImageRegex =
+									/!\[\[([^\]]+?)(?:\|[^\]]+)?\]\]/g;
+								const markdownImageRegex =
+									/!\[([^\]]*?)(?:\*\d+)?\]\(([^)]+)\)/g;
+
+								const wikiMatches = [
+									...content.matchAll(wikiImageRegex),
+								];
+								const markdownMatches = [
+									...content.matchAll(markdownImageRegex),
+								];
+
+								console.log(
+									`找到 ${wikiMatches.length} 个Wiki图片和 ${markdownMatches.length} 个Markdown图片`,
+								);
+
+								// 只处理本地wiki图片（不是URL）
+								const localWikiImages = wikiMatches.filter(
+									(match) => {
+										const imagePath =
+											match[1].split("|")[0];
+										return !imagePath.startsWith("http");
+									},
+								);
+
+								// 只处理本地markdown图片（不是URL）
+								const localMarkdownImages =
+									markdownMatches.filter((match) => {
+										const imagePath = match[2];
+										return !imagePath.startsWith("http");
+									});
+
+								const allLocalImages = [
+									...localWikiImages,
+									...localMarkdownImages,
+								];
+
+								if (allLocalImages.length === 0) {
+									new Notice("未找到本地图片");
+									return;
+								}
+
+								console.log(
+									`找到 ${allLocalImages.length} 个本地图片`,
+								);
+
+								let newContent = content;
+								let uploadedCount = 0;
+
+								// 处理每个本地图片
+								for (const match of allLocalImages) {
+									const fullMatch = match[0];
+									let imagePath: string;
+
+									// 判断是wiki格式还是markdown格式
+									if (
+										match[1] !== undefined &&
+										match[2] === undefined
+									) {
+										// Wiki格式: ![[filename|width]]
+										imagePath = match[1].split("|")[0];
+									} else {
+										// Markdown格式: ![alt](url) 或 ![](url)
+										imagePath = match[2];
+									}
+
+									console.log(`处理本地图片: ${imagePath}`);
+
+									const imageFile = this.findImageFile(
+										imagePath,
+										file,
+									);
+
+									if (!imageFile) {
+										console.log(
+											`跳过图片: ${imagePath} (文件不存在)`,
+										);
+										continue;
+									}
+
+									try {
+										// 读取图片文件
+										const imageArrayBuffer =
+											await this.app.vault.readBinary(
+												imageFile,
+											);
+										const imageBlob = new Blob([
+											imageArrayBuffer,
+										]);
+										const imageToUpload = new File(
+											[imageBlob],
+											imageFile.name.replace(/\s/g, ""),
+											{ type: "image/png" },
+										);
+
+										// 准备笔记信息
+										const noteInfo = {
+											noteName: file.basename || "未命名",
+											notePath: file.path,
+										};
+
+										// 上传图片到COS
+										console.log(
+											`开始上传图片: ${imageFile.name}`,
+										);
+										const result =
+											await this.uploader.uploadFile(
+												imageToUpload,
+												undefined,
+												noteInfo,
+											);
+										console.log(
+											`图片上传成功，URL: ${result.url}`,
+										);
+
+										// 替换wiki链接为markdown链接，使用生成的 displayName
+										newContent = newContent.replace(
+											fullMatch,
+											`![${result.displayName}](${result.url})`,
+										);
+
+										uploadedCount++;
+										new Notice(`已上传: ${imageFile.name}`);
+									} catch (error) {
+										console.error(
+											`上传图片 ${imagePath} 失败:`,
+											error,
+										);
+										new Notice(
+											`上传失败: ${imagePath} - ${error.message}`,
+										);
+									}
+								}
+
+								// 更新笔记内容
+								if (uploadedCount > 0) {
+									await this.app.vault.modify(
+										file,
+										newContent,
+									);
+									new Notice(
+										`成功上传 ${uploadedCount} 张图片到COS`,
+									);
+								}
+							} catch (error) {
+								new Notice(`处理失败: ${error.message}`);
+								console.error("Process error:", error);
+							}
+						});
+				});
+
+				menu.addItem((item) => {
 					item.setTitle("本地笔记备份")
 						.setIcon("image-plus")
 						.onClick(async () => {
