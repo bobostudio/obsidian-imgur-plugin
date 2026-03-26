@@ -23,6 +23,8 @@ interface ImgurPluginSettings {
 	backupPath: string;
 	publicRead: boolean;
 	enableCustomNaming: boolean;
+	enableFileUpload: boolean;
+	allowedFileExtensions: string;
 }
 
 const DEFAULT_SETTINGS: ImgurPluginSettings = {
@@ -35,6 +37,8 @@ const DEFAULT_SETTINGS: ImgurPluginSettings = {
 	backupPath: "",
 	publicRead: false,
 	enableCustomNaming: false,
+	enableFileUpload: false,
+	allowedFileExtensions: "pdf,mp3,mp4,wav,doc,docx,xls,xlsx,ppt,pptx,zip,mov,webm",
 };
 
 export default class ImgurPlugin extends Plugin {
@@ -152,9 +156,11 @@ export default class ImgurPlugin extends Plugin {
 							file.size,
 						);
 
-						// 检查是否为图片文件
-						if (!file.type.startsWith("image/")) {
-							console.log("跳过非图片文件:", file.name);
+						// 检查是否为图片文件或允许的文件类型
+						const isImage = file.type.startsWith("image/");
+						const isAllowed = this.isAllowedFile(file);
+						if (!isImage && !isAllowed) {
+							console.log("跳过不支持的文件:", file.name);
 							continue;
 						}
 
@@ -172,7 +178,7 @@ export default class ImgurPlugin extends Plugin {
 								continue;
 							}
 
-							console.log("开始处理拖拽的图片文件:", file.name);
+							console.log("开始处理拖拽的文件:", file.name);
 
 							// 准备笔记信息
 							const noteInfo = {
@@ -180,28 +186,38 @@ export default class ImgurPlugin extends Plugin {
 								notePath: activeFile.path,
 							};
 
-							// 上传图片
+							// 上传文件
 							const result = await this.uploader.uploadFile(
 								file,
 								undefined,
 								noteInfo,
 							);
 							console.log(
-								"拖拽图片上传完成，获得URL:",
+								"拖拽文件上传完成，获得URL:",
 								result.url,
 							);
 
-							// 直接插入云端URL到编辑器，使用生成的 displayName 作为 alt
+							// 图片使用 ![alt](url)，非图片使用 [filename](url)
 							const pos = editor.getCursor();
-							editor.replaceRange(
-								`![${result.displayName}](${result.url})`,
-								pos,
-							);
+							if (isImage) {
+								editor.replaceRange(
+									`![${result.displayName}](${result.url})`,
+									pos,
+								);
+							} else {
+								const originalName = file.name;
+								editor.replaceRange(
+									`[${originalName}](${result.url})`,
+									pos,
+								);
+							}
 
-							console.log("已插入图片链接到编辑器");
-							new Notice("图片上传成功！");
+							console.log("已插入文件链接到编辑器");
+							new Notice(
+								`${isImage ? "图片" : "文件"}上传成功！`,
+							);
 						} catch (error) {
-							new Notice("图片上传失败：" + error.message);
+							new Notice("文件上传失败：" + error.message);
 							console.error("Upload error:", error);
 						}
 					}
@@ -237,9 +253,11 @@ export default class ImgurPlugin extends Plugin {
 							file.size,
 						);
 
-						// 检查是否为图片文件
-						if (!file.type.startsWith("image/")) {
-							console.log("跳过非图片文件:", file.name);
+						// 检查是否为图片文件或允许的文件类型
+						const isImage = file.type.startsWith("image/");
+						const isAllowed = this.isAllowedFile(file);
+						if (!isImage && !isAllowed) {
+							console.log("跳过不支持的文件:", file.name);
 							continue;
 						}
 
@@ -259,7 +277,7 @@ export default class ImgurPlugin extends Plugin {
 								continue;
 							}
 
-							console.log("开始处理粘贴的图片文件:", file.name);
+							console.log("开始处理粘贴的文件:", file.name);
 
 							// 准备笔记信息
 							const noteInfo = {
@@ -267,28 +285,38 @@ export default class ImgurPlugin extends Plugin {
 								notePath: activeFile.path,
 							};
 
-							// 上传图片
+							// 上传文件
 							const result = await this.uploader.uploadFile(
 								file,
 								undefined,
 								noteInfo,
 							);
 							console.log(
-								"粘贴图片上传完成，获得URL:",
+								"粘贴文件上传完成，获得URL:",
 								result.url,
 							);
 
-							// 直接插入云端URL到编辑器，使用生成的 displayName 作为 alt
+							// 图片使用 ![alt](url)，非图片使用 [filename](url)
 							const pos = editor.getCursor();
-							editor.replaceRange(
-								`![${result.displayName}](${result.url})`,
-								pos,
-							);
+							if (isImage) {
+								editor.replaceRange(
+									`![${result.displayName}](${result.url})`,
+									pos,
+								);
+							} else {
+								const originalName = file.name;
+								editor.replaceRange(
+									`[${originalName}](${result.url})`,
+									pos,
+								);
+							}
 
-							console.log("已插入图片链接到编辑器");
-							new Notice("图片上传成功！");
+							console.log("已插入文件链接到编辑器");
+							new Notice(
+								`${isImage ? "图片" : "文件"}上传成功！`,
+							);
 						} catch (error) {
-							new Notice("图片上传失败：" + error.message);
+							new Notice("文件上传失败：" + error.message);
 							console.error("Upload error:", error);
 						}
 					}
@@ -1221,7 +1249,7 @@ export default class ImgurPlugin extends Plugin {
 						rawName || `image-${Date.now()}.png`,
 					);
 					const backupImagePath = `${noteBackupFolderPath}/${baseName}`;
-					
+
 					// 检查是否已存在备份
 					const existingBackup =
 						this.app.vault.getAbstractFileByPath(backupImagePath);
@@ -1310,7 +1338,11 @@ export default class ImgurPlugin extends Plugin {
 		}
 
 		// 创建备份笔记（使用COS URL）
-		if (urlToCosUrl.size > 0 || downloadedCount > 0 || cosSkippedCount > 0) {
+		if (
+			urlToCosUrl.size > 0 ||
+			downloadedCount > 0 ||
+			cosSkippedCount > 0
+		) {
 			await this.backupNote(activeFile, null, undefined, newContent);
 			new Notice(
 				`在线笔记备份完成，已处理 ${downloadedCount} 张外部图片，上传 ${uploadedCount} 张到COS，COS图片备份 ${cosSkippedCount} 张`,
@@ -1700,6 +1732,17 @@ export default class ImgurPlugin extends Plugin {
 			file.extension.toLowerCase().match(/png|jpg|jpeg|gif|svg|webp/i) !==
 			null
 		);
+	}
+
+	// 检查拖拽/粘贴的文件是否为允许上传的非图片文件
+	private isAllowedFile(file: File): boolean {
+		if (!this.settings.enableFileUpload) return false;
+		const ext = file.name.split(".").pop()?.toLowerCase() || "";
+		const allowedExts = this.settings.allowedFileExtensions
+			.split(",")
+			.map((e) => e.trim().toLowerCase())
+			.filter((e) => e.length > 0);
+		return allowedExts.includes(ext);
 	}
 
 	// 转义正则表达式特殊字符
@@ -2447,6 +2490,38 @@ class ImgurSettingTab extends PluginSettingTab {
 						}
 					});
 			});
+
+		// 多格式文件上传开关
+		new Setting(containerEl)
+			.setName("启用多格式文件上传")
+			.setDesc(
+				"开启后，拖拽或粘贴非图片文件（如 PDF、MP3 等）时也会自动上传到 COS",
+			)
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.enableFileUpload)
+					.onChange(async (value) => {
+						this.plugin.settings.enableFileUpload = value;
+						await this.plugin.saveSettings();
+						if (value) {
+							new Notice("已开启多格式文件上传");
+						}
+					});
+			});
+
+		// 允许的文件扩展名
+		new Setting(containerEl)
+			.setName("允许的文件类型")
+			.setDesc("非图片文件允许上传的扩展名，用英文逗号分隔")
+			.addTextArea((text) =>
+				text
+					.setPlaceholder("pdf,mp3,mp4,wav,doc,docx,zip,mov,webm")
+					.setValue(this.plugin.settings.allowedFileExtensions)
+					.onChange(async (value) => {
+						this.plugin.settings.allowedFileExtensions = value;
+						await this.plugin.saveSettings();
+					}),
+			);
 
 		// 添加测试上传按钮
 		new Setting(containerEl)
