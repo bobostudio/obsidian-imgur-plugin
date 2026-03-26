@@ -38,7 +38,7 @@ const DEFAULT_SETTINGS: ImgurPluginSettings = {
 	publicRead: false,
 	enableCustomNaming: false,
 	enableFileUpload: false,
-	allowedFileExtensions: "pdf,mp3,mp4,wav,doc,docx,xls,xlsx,ppt,pptx,zip",
+	allowedFileExtensions: "pdf,mp3,mp4,wav,doc,docx,xls,xlsx,ppt,pptx,zip,mov,webm",
 };
 
 export default class ImgurPlugin extends Plugin {
@@ -213,7 +213,9 @@ export default class ImgurPlugin extends Plugin {
 							}
 
 							console.log("已插入文件链接到编辑器");
-							new Notice(`${isImage ? "图片" : "文件"}上传成功！`);
+							new Notice(
+								`${isImage ? "图片" : "文件"}上传成功！`,
+							);
 						} catch (error) {
 							new Notice("文件上传失败：" + error.message);
 							console.error("Upload error:", error);
@@ -310,7 +312,9 @@ export default class ImgurPlugin extends Plugin {
 							}
 
 							console.log("已插入文件链接到编辑器");
-							new Notice(`${isImage ? "图片" : "文件"}上传成功！`);
+							new Notice(
+								`${isImage ? "图片" : "文件"}上传成功！`,
+							);
 						} catch (error) {
 							new Notice("文件上传失败：" + error.message);
 							console.error("Upload error:", error);
@@ -1245,7 +1249,7 @@ export default class ImgurPlugin extends Plugin {
 						rawName || `image-${Date.now()}.png`,
 					);
 					const backupImagePath = `${noteBackupFolderPath}/${baseName}`;
-					
+
 					// 检查是否已存在备份
 					const existingBackup =
 						this.app.vault.getAbstractFileByPath(backupImagePath);
@@ -1334,7 +1338,11 @@ export default class ImgurPlugin extends Plugin {
 		}
 
 		// 创建备份笔记（使用COS URL）
-		if (urlToCosUrl.size > 0 || downloadedCount > 0 || cosSkippedCount > 0) {
+		if (
+			urlToCosUrl.size > 0 ||
+			downloadedCount > 0 ||
+			cosSkippedCount > 0
+		) {
 			await this.backupNote(activeFile, null, undefined, newContent);
 			new Notice(
 				`在线笔记备份完成，已处理 ${downloadedCount} 张外部图片，上传 ${uploadedCount} 张到COS，COS图片备份 ${cosSkippedCount} 张`,
@@ -2504,12 +2512,10 @@ class ImgurSettingTab extends PluginSettingTab {
 		// 允许的文件扩展名
 		new Setting(containerEl)
 			.setName("允许的文件类型")
-			.setDesc(
-				"非图片文件允许上传的扩展名，用英文逗号分隔",
-			)
-			.addText((text) =>
+			.setDesc("非图片文件允许上传的扩展名，用英文逗号分隔")
+			.addTextArea((text) =>
 				text
-					.setPlaceholder("pdf,mp3,mp4,wav,doc,docx,zip")
+					.setPlaceholder("pdf,mp3,mp4,wav,doc,docx,zip,mov,webm")
 					.setValue(this.plugin.settings.allowedFileExtensions)
 					.onChange(async (value) => {
 						this.plugin.settings.allowedFileExtensions = value;
