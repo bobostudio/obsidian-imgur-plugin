@@ -4,6 +4,7 @@ import {
 	ButtonComponent,
 	Editor,
 	MarkdownView,
+	Menu,
 	Modal,
 	Notice,
 	Plugin,
@@ -25,6 +26,7 @@ interface ImgurPluginSettings {
 	enableCustomNaming: boolean;
 	enableFileUpload: boolean;
 	allowedFileExtensions: string;
+	manualUploadMode: boolean;
 }
 
 const DEFAULT_SETTINGS: ImgurPluginSettings = {
@@ -39,6 +41,7 @@ const DEFAULT_SETTINGS: ImgurPluginSettings = {
 	enableCustomNaming: false,
 	enableFileUpload: false,
 	allowedFileExtensions: "pdf,mp3,mp4,wav,doc,docx,xls,xlsx,ppt,pptx,zip,mov,webm",
+	manualUploadMode: true,
 };
 
 export default class ImgurPlugin extends Plugin {
@@ -145,6 +148,28 @@ export default class ImgurPlugin extends Plugin {
 						return;
 					}
 
+					// 手动上传模式下，直接插入本地链接，不上传
+					if (this.settings.manualUploadMode) {
+						console.log("手动上传模式：仅插入本地链接");
+						const pos = editor.getCursor();
+						let insertText = "";
+						for (let i = 0; i < files.length; i++) {
+							const file = files[i];
+							const isImage = file.type.startsWith("image/");
+							if (isImage) {
+								insertText += `![${file.name}](${file.name})`;
+							} else {
+								insertText += `[${file.name}](${file.name})`;
+							}
+							if (i < files.length - 1) {
+								insertText += "\n";
+							}
+						}
+						editor.replaceRange(insertText, pos);
+						new Notice("已插入本地附件链接，请右键选择上传到COS");
+						return;
+					}
+
 					for (let i = 0; i < files.length; i++) {
 						const file = files[i];
 						console.log(
@@ -239,6 +264,28 @@ export default class ImgurPlugin extends Plugin {
 
 					if (!files || files.length === 0) {
 						console.log("没有检测到文件，退出处理");
+						return;
+					}
+
+					// 手动上传模式下，直接插入本地链接，不上传
+					if (this.settings.manualUploadMode) {
+						console.log("手动上传模式：仅插入本地链接");
+						const pos = editor.getCursor();
+						let insertText = "";
+						for (let i = 0; i < files.length; i++) {
+							const file = files[i];
+							const isImage = file.type.startsWith("image/");
+							if (isImage) {
+								insertText += `![${file.name}](${file.name})`;
+							} else {
+								insertText += `[${file.name}](${file.name})`;
+							}
+							if (i < files.length - 1) {
+								insertText += "\n";
+							}
+						}
+						editor.replaceRange(insertText, pos);
+						new Notice("已插入本地附件链接，请右键选择上传到COS");
 						return;
 					}
 
@@ -843,6 +890,150 @@ export default class ImgurPlugin extends Plugin {
 						});
 				});
 			}),
+		);
+
+		// 注册编辑器右键菜单，支持上传选中的本地附件到COS
+		this.registerEvent(
+			this.app.workspace.on(
+				"editor-menu",
+				(menu: Menu, editor: Editor, view: MarkdownView) => {
+					const selection = editor.getSelection();
+					if (!selection || selection.trim().length === 0) {
+						return;
+					}
+
+					// 检查选中文本中是否包含本地附件链接
+					const localAttachmentLinks =
+						this.findLocalAttachmentLinks(selection);
+					if (localAttachmentLinks.length === 0) {
+						return;
+					}
+
+					menu.addItem((item) => {
+						item.setTitle("上传附件到COS")
+							.setIcon("upload-cloud")
+							.onClick(async () => {
+								if (!this.uploader) {
+									new Notice(
+										"COS上传器未初始化，请检查配置",
+									);
+									return;
+								}
+
+								const currentFile = view.file;
+								if (!currentFile) {
+									new Notice("未找到当前文件");
+									return;
+								}
+
+								const noteInfo = {
+									noteName: currentFile.basename || "未命名",
+									notePath: currentFile.path,
+								};
+
+								let uploadedCount = 0;
+								let failedCount = 0;
+								let newContent = editor.getValue();
+
+								for (const link of localAttachmentLinks) {
+									try {
+										// 查找本地文件
+										const filePath = link.path;
+										const file =
+											this.findAttachmentFile(filePath);
+
+										if (!file) {
+											console.log(
+												`找不到文件: ${filePath}`,
+											);
+											failedCount++;
+											continue;
+										}
+
+										// 读取文件内容
+										const arrayBuffer =
+											await this.app.vault.readBinary(
+												file,
+											);
+										const blob = new Blob([arrayBuffer]);
+										const fileToUpload = new File(
+											[blob],
+											file.name.replace(/\s/g, ""),
+											{
+												type: this.getMimeType(
+													file.extension,
+												),
+											},
+										);
+
+										// 上传文件
+										const result =
+											await this.uploader.uploadFile(
+												fileToUpload,
+												undefined,
+												noteInfo,
+											);
+
+										// 替换链接
+										const escapedPath =
+											this.escapeRegex(filePath);
+										const linkRegex = new RegExp(
+											`\\[([^\\]]*)\\]\\(${escapedPath}\\)`,
+											"g",
+										);
+										const isImage = [
+											"png", "jpg", "jpeg", "gif",
+											"svg", "webp", "bmp",
+										].includes(
+											file.extension.toLowerCase(),
+										);
+
+										if (isImage) {
+											newContent = newContent.replace(
+												linkRegex,
+												`![${result.displayName}](${result.url})`,
+											);
+										} else {
+											newContent = newContent.replace(
+												linkRegex,
+												`[${file.name}](${result.url})`,
+											);
+										}
+
+										uploadedCount++;
+										new Notice(`已上传: ${file.name}`);
+									} catch (error) {
+										console.error(
+											`上传附件失败: ${link.path}`,
+											error,
+										);
+										failedCount++;
+										new Notice(
+											`上传失败: ${link.path} - ${error.message}`,
+										);
+									}
+								}
+
+								// 更新笔记内容
+								if (uploadedCount > 0) {
+									await this.app.vault.modify(
+										currentFile,
+										newContent,
+									);
+									new Notice(
+										`成功上传 ${uploadedCount} 个附件到COS${
+											failedCount > 0
+												? `，${failedCount} 个失败`
+												: ""
+										}`,
+									);
+								} else if (failedCount > 0) {
+									new Notice(`上传失败，共 ${failedCount} 个`);
+								}
+							});
+					});
+				},
+			),
 		);
 
 		// 添加图片管理命令
@@ -1745,6 +1936,82 @@ export default class ImgurPlugin extends Plugin {
 		return allowedExts.includes(ext);
 	}
 
+	// 从选中文本中找出本地附件链接
+	private findLocalAttachmentLinks(
+		text: string,
+	): Array<{ path: string; name: string }> {
+		const links: Array<{ path: string; name: string }> = [];
+		// 匹配 [name](path) 格式的链接，排除 http(s) 开头的链接
+		const linkRegex = /\[([^\]]+)\]\((([^)http]|http[^s])[^)]*)\)/g;
+		let match;
+
+		while ((match = linkRegex.exec(text)) !== null) {
+			const name = match[1];
+			const path = match[2];
+			// 排除已经是网络链接的
+			if (!path.startsWith("http://") && !path.startsWith("https://")) {
+				links.push({ path, name });
+			}
+		}
+
+		return links;
+	}
+
+	// 根据路径查找附件文件
+	private findAttachmentFile(filePath: string): TFile | null {
+		// 清理路径
+		const cleanPath = filePath.split("/").pop() || filePath;
+
+		// 1. 尝试直接获取
+		let file = this.app.vault.getAbstractFileByPath(filePath);
+		if (file instanceof TFile) {
+			return file;
+		}
+
+		// 2. 尝试在 vault 根目录查找
+		file = this.app.vault.getAbstractFileByPath(`/${cleanPath}`);
+		if (file instanceof TFile) {
+			return file;
+		}
+
+		// 3. 递归搜索整个 vault
+		const files = this.app.vault.getFiles();
+		const foundFile = files.find((f) => f.name === cleanPath);
+		if (foundFile) {
+			return foundFile;
+		}
+
+		// 4. 模糊匹配
+		return files.find((f) => f.path.endsWith(cleanPath)) || null;
+	}
+
+	// 根据扩展名获取 MIME 类型
+	private getMimeType(extension: string): string {
+		const mimeTypes: Record<string, string> = {
+			pdf: "application/pdf",
+			mp3: "audio/mpeg",
+			mp4: "video/mp4",
+			wav: "audio/wav",
+			doc: "application/msword",
+			docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			xls: "application/vnd.ms-excel",
+			xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+			ppt: "application/vnd.ms-powerpoint",
+			pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+			zip: "application/zip",
+			mov: "video/quicktime",
+			webm: "video/webm",
+			png: "image/png",
+			jpg: "image/jpeg",
+			jpeg: "image/jpeg",
+			gif: "image/gif",
+			svg: "image/svg+xml",
+			webp: "image/webp",
+			bmp: "image/bmp",
+		};
+		return mimeTypes[extension.toLowerCase()] || "application/octet-stream";
+	}
+
 	// 转义正则表达式特殊字符
 	private escapeRegex(str: string): string {
 		return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -2487,6 +2754,26 @@ class ImgurSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 						if (value) {
 							new Notice("已开启规则图片命名");
+						}
+					});
+			});
+
+		// 手动上传模式开关
+		new Setting(containerEl)
+			.setName("手动上传模式")
+			.setDesc(
+				"开启后，拖拽或粘贴文件仅插入本地链接，不会自动上传。需要手动右键选择「上传附件到COS」来上传。",
+			)
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.manualUploadMode)
+					.onChange(async (value) => {
+						this.plugin.settings.manualUploadMode = value;
+						await this.plugin.saveSettings();
+						if (value) {
+							new Notice("已开启手动上传模式");
+						} else {
+							new Notice("已关闭手动上传模式，将自动上传文件");
 						}
 					});
 			});
