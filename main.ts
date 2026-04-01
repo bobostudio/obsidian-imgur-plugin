@@ -25,6 +25,7 @@ interface ImgurPluginSettings {
 	enableCustomNaming: boolean;
 	enableFileUpload: boolean;
 	allowedFileExtensions: string;
+	customDomain: string;
 }
 
 const DEFAULT_SETTINGS: ImgurPluginSettings = {
@@ -39,6 +40,7 @@ const DEFAULT_SETTINGS: ImgurPluginSettings = {
 	enableCustomNaming: false,
 	enableFileUpload: false,
 	allowedFileExtensions: "pdf,mp3,mp4,wav,doc,docx,xls,xlsx,ppt,pptx,zip,mov,webm",
+	customDomain: "",
 };
 
 export default class ImgurPlugin extends Plugin {
@@ -2309,19 +2311,59 @@ class ImgurSettingTab extends PluginSettingTab {
 			.setDesc("存储桶所在地域")
 			.addDropdown((dropdown) => {
 				dropdown
-					.addOption("ap-guangzhou", "广州")
-					.addOption("ap-beijing", "北京")
-					.addOption("ap-shanghai", "上海")
-					.addOption("ap-chengdu", "成都")
-					.addOption("ap-hongkong", "香港")
-					.addOption("ap-nanjing", "南京")
-					.addOption("ap-chongqing", "重庆")
+					// 中国大陆
+					.addOption("ap-beijing-1", "北京一区（ap-beijing-1）")
+					.addOption("ap-beijing", "北京（ap-beijing）")
+					.addOption("ap-nanjing", "南京（ap-nanjing）")
+					.addOption("ap-shanghai", "上海（ap-shanghai）")
+					.addOption("ap-guangzhou", "广州（ap-guangzhou）")
+					.addOption("ap-chengdu", "成都（ap-chengdu）")
+					.addOption("ap-chongqing", "重庆（ap-chongqing）")
+					// 金融云
+					.addOption("ap-shenzhen-fsi", "深圳金融（ap-shenzhen-fsi）")
+					.addOption("ap-shanghai-fsi", "上海金融（ap-shanghai-fsi）")
+					.addOption("ap-beijing-fsi", "北京金融（ap-beijing-fsi）")
+					// 亚太
+					.addOption("ap-hongkong", "香港（ap-hongkong）")
+					.addOption("ap-singapore", "新加坡（ap-singapore）")
+					.addOption("ap-jakarta", "雅加达（ap-jakarta）")
+					.addOption("ap-seoul", "首尔（ap-seoul）")
+					.addOption("ap-bangkok", "曼谷（ap-bangkok）")
+					.addOption("ap-tokyo", "东京（ap-tokyo）")
+					.addOption("ap-mumbai", "孟买（ap-mumbai）")
+					// 中东
+					.addOption("me-saudi-arabia", "沙特阿拉伯（me-saudi-arabia）")
+					// 北美
+					.addOption("na-siliconvalley", "硅谷（na-siliconvalley）")
+					.addOption("na-ashburn", "弗吉尼亚（na-ashburn）")
+					// 南美
+					.addOption("sa-saopaulo", "圣保罗（sa-saopaulo）")
+					// 欧洲
+					.addOption("eu-frankfurt", "法兰克福（eu-frankfurt）")
 					.setValue(this.plugin.settings.region)
 					.onChange(async (value) => {
 						this.plugin.settings.region = value.trim();
 						await this.plugin.saveSettings();
 					});
 			});
+
+		new Setting(containerEl)
+			.setName("自定义域名")
+			.setDesc(
+				"可选。设置后，生成的图片链接将使用此域名替换默认的 COS 域名。例如：img.example.com 或 <bucket>.cos.ap-singapore.myqcloud.com（不含 https://，结尾不加斜杠）",
+			)
+			.addText((text) =>
+				text
+					.setPlaceholder("例如：img.example.com")
+					.setValue(this.plugin.settings.customDomain)
+					.onChange(async (value) => {
+						// 去除协议头和末尾斜杠
+						let domain = value.trim();
+						domain = domain.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+						this.plugin.settings.customDomain = domain;
+						await this.plugin.saveSettings();
+					}),
+			);
 
 		new Setting(containerEl)
 			.setName("存储路径前缀")
@@ -2838,7 +2880,11 @@ class COSUploader {
 		if (this.settings.publicRead) {
 			const bucket = this.settings.bucket;
 			const region = this.settings.region;
-			const cleanUrl = `https://${bucket}.cos.${region}.myqcloud.com/${key}`;
+			const defaultHost = `${bucket}.cos.${region}.myqcloud.com`;
+			const host = this.settings.customDomain
+				? this.settings.customDomain
+				: defaultHost;
+			const cleanUrl = `https://${host}/${key}`;
 			console.log("公有读URL生成成功:", cleanUrl);
 			return Promise.resolve(cleanUrl);
 		}
@@ -2860,10 +2906,19 @@ class COSUploader {
 						return;
 					}
 
-					const finalUrl =
+					let finalUrl =
 						data.Url +
 						(data.Url.indexOf("?") > -1 ? "&" : "?") +
 						"response-content-disposition=inline";
+
+					// 如果配置了自定义域名，替换默认 COS 域名
+					if (this.settings.customDomain) {
+						const defaultHost = `${this.settings.bucket}.cos.${this.settings.region}.myqcloud.com`;
+						finalUrl = finalUrl.replace(
+							`https://${defaultHost}`,
+							`https://${this.settings.customDomain}`,
+						);
+					}
 
 					console.log("签名URL生成成功:", finalUrl);
 					resolve(finalUrl);
