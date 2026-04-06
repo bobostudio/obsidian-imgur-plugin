@@ -15,7 +15,7 @@ import {
 
 interface ImgurPluginSettings {
 	secretId: string;
-	secretKey: string;
+	secretKey: string;   
 	bucket: string;
 	region: string;
 	prefix: string;
@@ -331,7 +331,7 @@ export default class ImgurPlugin extends Plugin {
 				if (file.extension !== "md") return;
 
 				menu.addItem((item) => {
-					item.setTitle("图片同步COS")
+					item.setTitle("同步COS")
 						.setIcon("upload-cloud")
 						.onClick(async () => {
 							if (!this.uploader) {
@@ -359,7 +359,7 @@ export default class ImgurPlugin extends Plugin {
 									`找到 ${wikiMatches.length} 个Wiki图片和 ${markdownMatches.length} 个Markdown图片`,
 								);
 
-								// 只处理本地wiki图片（不是URL）
+								// 分离本地图片和外链图片
 								const localWikiImages = wikiMatches.filter(
 									(match) => {
 										const imagePath =
@@ -368,25 +368,35 @@ export default class ImgurPlugin extends Plugin {
 									},
 								);
 
-								// 只处理本地markdown图片（不是URL）
 								const localMarkdownImages =
 									markdownMatches.filter((match) => {
 										const imagePath = match[2];
 										return !imagePath.startsWith("http");
 									});
 
+								// 外链图片（Markdown格式）
+								const externalMarkdownImages =
+									markdownMatches.filter((match) => {
+										const imagePath = match[2];
+										return imagePath.startsWith("http");
+									});
+
 								const allLocalImages = [
 									...localWikiImages,
 									...localMarkdownImages,
 								];
+								const allExternalImages = externalMarkdownImages;
 
-								if (allLocalImages.length === 0) {
-									new Notice("未找到本地图片");
+								if (
+									allLocalImages.length === 0 &&
+									allExternalImages.length === 0
+								) {
+									new Notice("未找到本地图片或外链图片");
 									return;
 								}
 
 								console.log(
-									`找到 ${allLocalImages.length} 个本地图片`,
+									`找到 ${allLocalImages.length} 个本地图片和 ${allExternalImages.length} 个外链图片`,
 								);
 
 								let newContent = content;
@@ -473,6 +483,120 @@ export default class ImgurPlugin extends Plugin {
 										);
 										new Notice(
 											`上传失败: ${imagePath} - ${error.message}`,
+										);
+									}
+								}
+
+								// 处理每个外链图片
+								for (const match of allExternalImages) {
+									const fullMatch = match[0];
+									const imageUrl = match[2];
+
+									console.log(`处理外链图片: ${imageUrl}`);
+
+									try {
+										// 从URL获取图片
+										const response = await fetch(imageUrl, {
+											mode: "cors",
+										});
+										if (!response.ok) {
+											throw new Error(
+												`HTTP ${response.status}`,
+											);
+										}
+
+										// 优先使用响应头中的Content-Type，其次从URL推断
+										let mimeType =
+											response.headers.get(
+												"content-type",
+											) || "image/png";
+										// 清理MIME类型，只保留主类型
+										if (mimeType.includes(";")) {
+											mimeType =
+												mimeType.split(";")[0].trim();
+										}
+
+										// 使用 blob() 获取图片数据
+										const imageBlob = await response.blob();
+
+										// 从URL提取文件名
+										const urlPath =
+											new URL(imageUrl).pathname;
+										let fileName = decodeURIComponent(
+											urlPath.split("/").pop() ||
+												"external_image",
+										);
+										// 清理文件名中的双扩展名等问题
+										fileName = fileName
+											.replace(/\.\./g, ".")
+											.replace(/\s/g, "");
+
+										// 根据MIME类型添加正确扩展名
+										let ext = "";
+										if (mimeType === "image/gif") {
+											ext = ".gif";
+										} else if (mimeType === "image/webp") {
+											ext = ".webp";
+										} else if (
+											mimeType === "image/jpeg" ||
+											mimeType === "image/jpg"
+										) {
+											ext = ".jpg";
+										} else if (mimeType === "image/png") {
+											ext = ".png";
+										}
+										// 确保文件有正确扩展名
+										if (
+											ext &&
+											!fileName.toLowerCase().endsWith(ext)
+										) {
+											fileName += ext;
+										}
+
+										const imageToUpload = new File(
+											[imageBlob],
+											fileName,
+											{ type: mimeType },
+										);
+
+										// 准备笔记信息
+										const noteInfo = {
+											noteName: file.basename || "未命名",
+											notePath: file.path,
+										};
+
+										// 上传图片到COS
+										console.log(
+											`开始上传外链图片: ${fileName}`,
+										);
+										const result =
+											await this.uploader.uploadFile(
+												imageToUpload,
+												undefined,
+												noteInfo,
+											);
+										console.log(
+											`外链图片上传成功，URL: ${result.url}`,
+										);
+
+										// 替换原链接为COS链接
+										newContent = newContent.replace(
+											fullMatch,
+											`![${result.displayName}](${result.url})`,
+										);
+
+										uploadedCount++;
+										new Notice(
+											`已上传外链: ${fileName}`,
+										);
+									} catch (error) {
+										const errorMessage = error instanceof Error ? error.message : String(error);
+										console.error(
+											`上传外链图片 ${imageUrl} 失败:`,
+											error,
+										);
+										new Notice(
+											`上传失败: ${imageUrl} - ${errorMessage}`,
 										);
 									}
 								}
@@ -1730,10 +1854,20 @@ export default class ImgurPlugin extends Plugin {
 	}
 
 	private isImageFile(file: TFile): boolean {
-		return (
-			file.extension.toLowerCase().match(/png|jpg|jpeg|gif|svg|webp/i) !==
-			null
-		);
+		// 图片文件扩展名
+		const imageExts = ["png", "jpg", "jpeg", "gif", "svg", "webp"];
+		if (imageExts.includes(file.extension.toLowerCase())) {
+			return true;
+		}
+		// 检查是否为允许的非图片附件
+		if (this.settings.enableFileUpload) {
+			const allowedExts = this.settings.allowedFileExtensions
+				.split(",")
+				.map((e) => e.trim().toLowerCase())
+				.filter((e) => e.length > 0);
+			return allowedExts.includes(file.extension.toLowerCase());
+		}
+		return false;
 	}
 
 	// 检查拖拽/粘贴的文件是否为允许上传的非图片文件
@@ -2933,13 +3067,14 @@ class COSUploader {
 
 	//#region COS 图片管理
 
-	// 列出存储桶中的图片
+	// 列出存储桶中的文件
 	async listImages(marker?: string): Promise<{
 		images: Array<{
 			key: string;
 			size: number;
 			lastModified: string;
 			url: string;
+			fileType: string;
 		}>;
 		isTruncated: boolean;
 		nextMarker?: string;
@@ -2966,21 +3101,25 @@ class COSUploader {
 					try {
 						const images = [];
 						for (const item of data.Contents || []) {
-							// 只处理图片文件
-							if (this.isImageFile(item.Key)) {
-								const url = await this.getSignedUrl(item.Key);
-								images.push({
-									key: item.Key,
-									size: parseInt(item.Size),
-									lastModified: item.LastModified,
-									url: url,
-								});
-							}
+							// 处理所有文件类型
+							const fileType = this.getFileType(item.Key);
+							const url = await this.getSignedUrl(item.Key);
+							images.push({
+								key: item.Key,
+								size: parseInt(item.Size),
+								lastModified: item.LastModified,
+								url: url,
+								fileType: fileType,
+							});
 						}
+						// 按最后修改时间倒序（最新在前）
+						images.sort((a, b) =>
+							new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime()
+						);
 
 						resolve({
 							images,
-							isTruncated: data.IsTruncated === "true",
+							isTruncated: data.IsTruncated === true || data.IsTruncated === "true",
 							nextMarker: data.NextMarker,
 						});
 					} catch (error) {
@@ -3046,12 +3185,31 @@ class COSUploader {
 		});
 	}
 
-	// 检查是否为图片文件
-	private isImageFile(key: string): boolean {
-		const extension = key.split(".").pop()?.toLowerCase();
-		return ["png", "jpg", "jpeg", "gif", "svg", "webp", "bmp"].includes(
-			extension || "",
-		);
+	// 获取文件类型分类
+	private getFileType(key: string): string {
+		const extension = key.split(".").pop()?.toLowerCase() || "";
+		const imageExts = ["png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "ico", "tiff", "tif", "heic", "heif", "avif", "apng", "raw", "psd", "eps", "ai"];
+		const videoExts = ["mp4", "avi", "mov", "mkv", "wmv", "flv", "webm", "m4v", "mpeg", "mpg", "3gp", "ogv"];
+		const audioExts = ["mp3", "wav", "ogg", "flac", "aac", "m4a", "wma", "opus", "ape", "alac", "mid", "midi"];
+		const docExts = ["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "md", "rtf", "odt", "ods", "odp", "csv", "tsv", "xlsb", "xlsm"];
+		const archiveExts = ["zip", "rar", "7z", "tar", "gz", "bz2", "xz", "lz", "lzma", "cab", "iso", "dmg", "pkg"];
+		const codeExts = ["html", "htm", "css", "js", "ts", "tsx", "jsx", "json", "xml", "yaml", "yml", "py", "java", "c", "cpp", "h", "hpp", "cs", "go", "rs", "rb", "php", "sh", "bat", "ps1", "sql", "sqlite", "db"];
+		const fontExts = ["ttf", "otf", "woff", "woff2", "eot", "svg"];
+		const bookExts = ["epub", "mobi", "azw", "azw3", "azw4", "kf8"];
+		const cadExts = ["dwg", "dxf", "dwt", "dwf"];
+		const model3dExts = ["obj", "fbx", "stl", "gltf", "glb", "blend", "3ds", "dae", "step", "stp", "iges", "igs"];
+
+		if (imageExts.includes(extension)) return "image";
+		if (videoExts.includes(extension)) return "video";
+		if (audioExts.includes(extension)) return "audio";
+		if (docExts.includes(extension)) return "document";
+		if (archiveExts.includes(extension)) return "archive";
+		if (codeExts.includes(extension)) return "code";
+		if (fontExts.includes(extension)) return "font";
+		if (bookExts.includes(extension)) return "book";
+		if (cadExts.includes(extension)) return "cad";
+		if (model3dExts.includes(extension)) return "3d";
+		return "other";
 	}
 }
 // 图片管理Modal
@@ -3062,6 +3220,7 @@ class ImageManagerModal extends Modal {
 		size: number;
 		lastModified: string;
 		url: string;
+		fileType: string;
 		selected?: boolean;
 	}> = [];
 	private selectedImages: Set<string> = new Set();
@@ -3078,7 +3237,7 @@ class ImageManagerModal extends Modal {
 		const { contentEl } = this;
 		contentEl.empty();
 
-		contentEl.createEl("h2", { text: "COS 图片管理" });
+		contentEl.createEl("h2", { text: "COS 文件管理" });
 
 		// 创建工具栏
 		const toolbar = contentEl.createDiv("image-manager-toolbar");
@@ -3096,6 +3255,7 @@ class ImageManagerModal extends Modal {
 
 		// 全选/取消全选按钮
 		const selectAllBtn = new ButtonComponent(leftActions);
+
 		selectAllBtn.setButtonText("全选").onClick(() => {
 			if (this.selectedImages.size === this.images.length) {
 				this.selectedImages.clear();
@@ -3123,8 +3283,9 @@ class ImageManagerModal extends Modal {
 			this.loadImages(true);
 		});
 
-		// 创建图片列表容器
+		// 创建图片列表容器（必须在loadImages之前创建）
 		const listContainer = contentEl.createDiv("image-list-container");
+		listContainer.id = "cos-file-list";
 		listContainer.style.cssText = `
 			max-height: 500px;
 			overflow-y: auto;
@@ -3155,6 +3316,11 @@ class ImageManagerModal extends Modal {
 				this.images.push(...result.images);
 			}
 
+			// 始终保持倒序排列
+			this.images.sort((a, b) =>
+				new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime()
+			);
+
 			this.hasMore = result.isTruncated;
 			this.currentMarker = result.nextMarker;
 
@@ -3168,7 +3334,7 @@ class ImageManagerModal extends Modal {
 	}
 
 	private updateImageList() {
-		const container = this.contentEl.querySelector(".image-list-container");
+		const container = this.contentEl.querySelector("#cos-file-list");
 		if (!container) return;
 
 		container.empty();
@@ -3180,11 +3346,11 @@ class ImageManagerModal extends Modal {
 				padding: 40px;
 				color: var(--text-muted);
 			`;
-			emptyDiv.textContent = "暂无图片";
+			emptyDiv.textContent = "暂无文件";
 			return;
 		}
 
-		// 创建图片网格
+		// 创建文件网格
 		const grid = container.createDiv("image-grid");
 		grid.style.cssText = `
 			display: grid;
@@ -3222,7 +3388,7 @@ class ImageManagerModal extends Modal {
 				this.updateImageList();
 			});
 
-			// 图片预览
+			// 文件预览
 			const imgContainer = item.createDiv();
 			imgContainer.style.cssText = `
 				position: relative;
@@ -3233,13 +3399,50 @@ class ImageManagerModal extends Modal {
 				justify-content: center;
 			`;
 
-			const img = imgContainer.createEl("img");
-			img.src = image.url;
-			img.style.cssText = `
-				max-width: 100%;
-				max-height: 100%;
-				object-fit: contain;
-			`;
+			if (image.fileType === "image") {
+				const img = imgContainer.createEl("img");
+				img.src = image.url;
+				img.style.cssText = `
+					max-width: 100%;
+					max-height: 100%;
+					object-fit: contain;
+				`;
+			} else {
+				// 显示文件类型图标
+				const iconDiv = imgContainer.createDiv();
+				iconDiv.style.cssText = `
+					font-size: 48px;
+					display: flex;
+					flex-direction: column;
+					align-items: center;
+					justify-content: center;
+					color: var(--text-muted);
+				`;
+
+				const iconSpan = iconDiv.createSpan();
+				iconSpan.style.cssText = "font-size: 36px;";
+
+				const typeLabel = iconDiv.createDiv();
+				typeLabel.style.cssText = "font-size: 11px; margin-top: 4px; text-transform: uppercase;";
+				typeLabel.textContent = image.fileType === "video" ? "VIDEO" :
+					image.fileType === "audio" ? "AUDIO" :
+					image.fileType === "document" ? "DOC" :
+					image.fileType === "archive" ? "ARCHIVE" :
+					image.fileType === "code" ? "CODE" :
+					image.fileType === "font" ? "FONT" :
+					image.fileType === "book" ? "BOOK" :
+					image.fileType === "cad" ? "CAD" :
+					image.fileType === "3d" ? "3D" : "FILE";
+				iconSpan.textContent = image.fileType === "video" ? "\u{1F3AC}" :
+					image.fileType === "audio" ? "\u{1F3B5}" :
+					image.fileType === "document" ? "\u{1F4C4}" :
+					image.fileType === "archive" ? "\u{1F4E6}" :
+					image.fileType === "code" ? "\u{1F4BB}" :
+					image.fileType === "font" ? "\u{1F3DB}" :
+					image.fileType === "book" ? "\u{1F4DA}" :
+					image.fileType === "cad" ? "\u{1F4CF}" :
+					image.fileType === "3d" ? "\u{1F3A1}" : "\u{1F4C1}";
+			}
 
 			// 图片信息
 			const info = item.createDiv();
@@ -3248,14 +3451,54 @@ class ImageManagerModal extends Modal {
 				background: var(--background-primary);
 			`;
 
-			const fileName = info.createDiv();
+			const fileNameRow = info.createDiv();
+			fileNameRow.style.cssText = `
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+				margin-bottom: 4px;
+			`;
+
+			const fileName = fileNameRow.createDiv();
 			fileName.style.cssText = `
 				font-weight: 500;
-				margin-bottom: 4px;
 				word-break: break-all;
 				font-size: 12px;
+				flex: 1;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
 			`;
 			fileName.textContent = image.key.split("/").pop() || image.key;
+
+			// 复制链接按钮
+			const copyBtn = fileNameRow.createEl("button");
+			copyBtn.textContent = "复制链接";
+			copyBtn.style.cssText = `
+				font-size: 10px;
+				padding: 2px 6px;
+				margin-left: 8px;
+				cursor: pointer;
+				background: var(--background-secondary);
+				border: 1px solid var(--background-modifier-border);
+				border-radius: 4px;
+				color: var(--text-normal);
+				flex-shrink: 0;
+			`;
+			copyBtn.addEventListener("click", async (e) => {
+				e.stopPropagation();
+				try {
+					await navigator.clipboard.writeText(image.url);
+					copyBtn.textContent = "已复制";
+					copyBtn.style.color = "var(--interactive-success)";
+					setTimeout(() => {
+						copyBtn.textContent = "复制链接";
+						copyBtn.style.color = "var(--text-normal)";
+					}, 1500);
+				} catch (err) {
+					new Notice("复制失败");
+				}
+			});
 
 			const details = info.createDiv();
 			details.style.cssText = `
@@ -3278,6 +3521,11 @@ class ImageManagerModal extends Modal {
 				if (e.target === checkbox) return;
 				checkbox.checked = !checkbox.checked;
 				checkbox.dispatchEvent(new Event("change"));
+			});
+
+			// 双击预览文件
+			item.addEventListener("dblclick", () => {
+				this.previewFile(image);
 			});
 		});
 
@@ -3347,6 +3595,17 @@ class ImageManagerModal extends Modal {
 		return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 	}
 
+	private previewFile(image: {
+		key: string;
+		size: number;
+		lastModified: string;
+		url: string;
+		fileType: string;
+	}) {
+		// 所有文件都显示预览Modal
+		new FilePreviewModal(this.app, image).open();
+	}
+
 	onClose() {
 		const { contentEl } = this;
 		contentEl.empty();
@@ -3410,4 +3669,244 @@ class DeleteConfirmModal extends Modal {
 		this.resolve(false);
 	}
 	//#endregion
+}
+
+// 文件预览Modal
+class FilePreviewModal extends Modal {
+	private image: {
+		key: string;
+		size: number;
+		lastModified: string;
+		url: string;
+		fileType: string;
+	};
+
+	constructor(app: App, image: {
+		key: string;
+		size: number;
+		lastModified: string;
+		url: string;
+		fileType: string;
+	}) {
+		super(app);
+		this.image = image;
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.empty();
+
+		const fileName = this.image.key.split("/").pop() || this.image.key;
+
+		// 标题栏
+		const header = contentEl.createDiv();
+		header.style.cssText = `
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			padding: 12px 16px;
+			border-bottom: 1px solid var(--background-modifier-border);
+		`;
+
+		header.createEl("h2", { text: fileName });
+
+		const closeBtn = new ButtonComponent(header);
+		closeBtn.setButtonText("关闭").onClick(() => {
+			this.close();
+		});
+
+		// 内容区
+		const body = contentEl.createDiv();
+		body.style.cssText = `
+			padding: 20px;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			overflow: auto;
+			max-height: 70vh;
+		`;
+
+		if (this.image.fileType === "video") {
+			const video = body.createEl("video");
+			video.src = this.image.url;
+			video.controls = true;
+			video.style.cssText = "max-width: 100%; max-height: 60vh;";
+		} else if (this.image.fileType === "audio") {
+			const audio = body.createEl("audio");
+			audio.src = this.image.url;
+			audio.controls = true;
+			audio.style.cssText = "width: 100%;";
+			body.appendChild(audio);
+		} else if (this.image.fileType === "image") {
+			// 图片预览（带缩放）
+			const zoomContainer = body.createDiv();
+			zoomContainer.style.cssText = `
+				position: relative;
+				width: 100%;
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+			`;
+
+			// 缩放控制栏
+			const zoomControls = zoomContainer.createDiv();
+			zoomControls.style.cssText = `
+				display: flex;
+				gap: 8px;
+				margin-bottom: 12px;
+				align-items: center;
+			`;
+
+			let currentZoom = 1;
+			const updateZoom = () => {
+				img.style.transform = `scale(${currentZoom})`;
+				zoomLabel.textContent = `${Math.round(currentZoom * 100)}%`;
+			};
+
+			const zoomInBtn = new ButtonComponent(zoomControls);
+			zoomInBtn.setButtonText("放大").onClick(() => {
+				currentZoom = Math.min(currentZoom + 0.25, 5);
+				updateZoom();
+			});
+
+			const zoomOutBtn = new ButtonComponent(zoomControls);
+			zoomOutBtn.setButtonText("缩小").onClick(() => {
+				currentZoom = Math.max(currentZoom - 0.25, 0.25);
+				updateZoom();
+			});
+
+			const resetBtn = new ButtonComponent(zoomControls);
+			resetBtn.setButtonText("重置").onClick(() => {
+				currentZoom = 1;
+				updateZoom();
+			});
+
+			const zoomLabel = zoomControls.createSpan();
+			zoomLabel.textContent = "100%";
+			zoomLabel.style.cssText = "margin-left: 12px; min-width: 50px;";
+
+			// 图片容器（支持拖拽）
+			const imgWrapper = zoomContainer.createDiv();
+			imgWrapper.style.cssText = `
+				overflow: auto;
+				max-width: 100%;
+				max-height: 55vh;
+				cursor: grab;
+				display: flex;
+				justify-content: center;
+				align-items: center;
+				border: 1px solid var(--background-modifier-border);
+				border-radius: 4px;
+			`;
+
+			let isDragging = false;
+			let dragStartX = 0;
+			let dragStartY = 0;
+			let scrollLeft = 0;
+			let scrollTop = 0;
+
+			// 拖拽滚动支持
+			imgWrapper.addEventListener("mousedown", (e) => {
+				if (e.button === 0) {
+					isDragging = true;
+					dragStartX = e.pageX - imgWrapper.offsetLeft;
+					dragStartY = e.pageY - imgWrapper.offsetTop;
+					scrollLeft = imgWrapper.scrollLeft;
+					scrollTop = imgWrapper.scrollTop;
+					imgWrapper.style.cursor = "grabbing";
+				}
+			});
+
+			imgWrapper.addEventListener("mousemove", (e) => {
+				if (!isDragging) return;
+				e.preventDefault();
+				const x = e.pageX - imgWrapper.offsetLeft;
+				const y = e.pageY - imgWrapper.offsetTop;
+				imgWrapper.scrollLeft = scrollLeft - (x - dragStartX);
+				imgWrapper.scrollTop = scrollTop - (y - dragStartY);
+			});
+
+			imgWrapper.addEventListener("mouseup", () => {
+				isDragging = false;
+				imgWrapper.style.cursor = "grab";
+			});
+
+			imgWrapper.addEventListener("mouseleave", () => {
+				isDragging = false;
+				imgWrapper.style.cursor = "grab";
+			});
+
+			// 鼠标滚轮缩放
+			imgWrapper.addEventListener("wheel", (e) => {
+				if (e.ctrlKey) {
+					e.preventDefault();
+					if (e.deltaY < 0) {
+						currentZoom = Math.min(currentZoom + 0.1, 5);
+					} else {
+						currentZoom = Math.max(currentZoom - 0.1, 0.25);
+					}
+					updateZoom();
+				}
+			});
+
+			const img = imgWrapper.createEl("img");
+			img.src = this.image.url;
+			img.style.cssText = `
+				max-width: 100%;
+				max-height: 100%;
+				width: auto;
+				height: auto;
+				object-fit: contain;
+				transform-origin: center center;
+				transition: transform 0.15s ease;
+				user-select: none;
+			`;
+
+			// 下载按钮
+			const downloadBtn = new ButtonComponent(zoomContainer);
+			downloadBtn.setButtonText("下载图片").onClick(() => {
+				window.open(this.image.url, "_blank");
+			});
+			downloadBtn.buttonEl.style.cssText = "margin-top: 12px;";
+		} else {
+			// 显示文件信息
+			const infoDiv = body.createDiv();
+			infoDiv.style.cssText = `
+				text-align: center;
+				padding: 40px;
+			`;
+
+			const icon = infoDiv.createDiv();
+			icon.style.cssText = "font-size: 64px; margin-bottom: 20px;";
+			icon.textContent = this.image.fileType === "document" ? "\u{1F4C4}" :
+				this.image.fileType === "archive" ? "\u{1F4E6}" : "\u{1F4C1}";
+
+			const fileNameEl = infoDiv.createEl("h3", { text: fileName });
+			fileNameEl.style.cssText = "margin: 0 0 10px 0; word-break: break-all;";
+
+			infoDiv.createEl("p", { text: `大小: ${this.formatFileSize(this.image.size)}` });
+			infoDiv.createEl("p", { text: `类型: ${this.image.fileType.toUpperCase()}` });
+			infoDiv.createEl("p", { text: `修改时间: ${new Date(this.image.lastModified).toLocaleString()}` });
+
+			// 下载按钮
+			const downloadBtn = new ButtonComponent(body);
+			downloadBtn.setButtonText("下载文件").onClick(() => {
+				window.open(this.image.url, "_blank");
+			});
+			downloadBtn.buttonEl.style.cssText = "margin-top: 20px;";
+		}
+	}
+
+	private formatFileSize(bytes: number): string {
+		if (bytes === 0) return "0 B";
+		const k = 1024;
+		const sizes = ["B", "KB", "MB", "GB"];
+		const i = Math.floor(Math.log(bytes) / Math.log(k));
+		return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+	}
+
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
+	}
 }
