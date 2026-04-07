@@ -10,7 +10,9 @@ import {
 	PluginSettingTab,
 	requestUrl,
 	Setting,
+	TAbstractFile,
 	TFile,
+	TFolder,
 } from "obsidian";
 
 interface ImgurPluginSettings {
@@ -126,6 +128,22 @@ export default class ImgurPlugin extends Plugin {
 
 		// 注册图片大小调整功能
 		this.registerImageResizer();
+
+		// 注册 Markdown 后处理器，使 *width 格式在所有上下文中生效（包括表格）
+		this.registerMarkdownPostProcessor((el) => {
+			const images = el.querySelectorAll("img");
+			images.forEach((img) => {
+				const alt = img.getAttribute("alt") || "";
+				const widthMatch = alt.match(/\*(\d+)$/);
+				if (widthMatch) {
+					const width = parseInt(widthMatch[1], 10);
+					if (width >= 50) {
+						img.style.width = width + "px";
+						img.style.height = "auto";
+					}
+				}
+			});
+		});
 
 		this.registerEvent(
 			this.app.workspace.on(
@@ -1122,6 +1140,64 @@ export default class ImgurPlugin extends Plugin {
 				}, 5000);
 
 				this.backupSyncTimers.set(file.path, timer);
+			}),
+		);
+
+		// 监听笔记重命名事件，自动更新备份文件夹和备份文件
+		this.registerEvent(
+			this.app.vault.on("rename", async (file: TAbstractFile, oldPath: string) => {
+				if (!(file instanceof TFile)) return;
+				if (file.extension !== "md") return;
+				// 跳过备份文件本身
+				if (file.name.endsWith("-backup.md")) return;
+
+				const oldBasename = oldPath.split("/").pop()?.replace(/\.md$/, "") || "";
+				const newBasename = file.basename;
+
+				// 如果文件名没变（只是移动了位置），不处理
+				if (oldBasename === newBasename) return;
+
+				console.log(`检测到笔记重命名: ${oldBasename} -> ${newBasename}`);
+
+				// 计算备份路径
+				let backupFolderPath: string;
+				if (this.settings.backupPath) {
+					backupFolderPath = this.settings.backupPath.startsWith("/")
+						? this.settings.backupPath.substring(1)
+						: this.settings.backupPath;
+				} else {
+					// 使用旧路径的父目录来定位备份文件夹
+					const oldParentPath = oldPath.substring(0, oldPath.lastIndexOf("/")) || "";
+					backupFolderPath = `${oldParentPath}/备份`;
+				}
+
+				const oldBackupFolderPath = `${backupFolderPath}/${oldBasename}`;
+				const oldBackupFolder = this.app.vault.getAbstractFileByPath(oldBackupFolderPath);
+
+				// 没有备份文件夹则不需要处理
+				if (!oldBackupFolder || !(oldBackupFolder instanceof TFolder)) return;
+
+				const newBackupFolderPath = `${backupFolderPath}/${newBasename}`;
+
+				try {
+					// 1. 重命名备份文件夹
+					await this.app.vault.rename(oldBackupFolder, newBackupFolderPath);
+					console.log(`备份文件夹已重命名: ${oldBackupFolderPath} -> ${newBackupFolderPath}`);
+
+					// 2. 重命名备份文件夹内的备份 md 文件
+					const oldBackupFilePath = `${newBackupFolderPath}/${oldBasename}-backup.md`;
+					const oldBackupFile = this.app.vault.getAbstractFileByPath(oldBackupFilePath);
+					if (oldBackupFile && oldBackupFile instanceof TFile) {
+						const newBackupFilePath = `${newBackupFolderPath}/${newBasename}-backup.md`;
+						await this.app.vault.rename(oldBackupFile, newBackupFilePath);
+						console.log(`备份文件已重命名: ${oldBackupFilePath} -> ${newBackupFilePath}`);
+					}
+
+					new Notice(`备份已同步更新：${oldBasename} → ${newBasename}`);
+				} catch (error) {
+					console.error("重命名备份文件夹失败:", error);
+					new Notice(`备份同步更新失败: ${error.message}`);
+				}
 			}),
 		);
 
